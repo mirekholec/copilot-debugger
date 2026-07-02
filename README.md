@@ -10,6 +10,7 @@ Local developer viewer for VS Code Copilot Chat sessions.
 - [What It Is](#what-it-is)
 - [Installation](#installation)
 - [Troubleshooting](#troubleshooting)
+- [Screenshots](#screenshots)
 - [Author](#author)
 - [Contribute](#contribute)
 - [License](#license)
@@ -86,6 +87,19 @@ VSCODE_WORKSPACE_STORAGE_ROOT="/path/to/workspaceStorage" npm run dev
 - Port is already used: set `PORT`, for example `PORT=4321 npm run dev`.
 - Broken or incomplete data: Copilot Chat log formats are not a stable public API and may change between VS Code versions.
 - TypeScript errors after changes: run `npm run typecheck` before debugging runtime behavior.
+
+## Screenshots
+
+<table>
+	<tr>
+		<td width="280"><a href="docs/cd1.png"><img src="docs/cd1.png" alt="Copilot Debugger session list" width="280" height="160"></a></td>
+		<td width="280"><a href="docs/cd2.png"><img src="docs/cd2.png" alt="Copilot Debugger session detail" width="280" height="160"></a></td>
+	</tr>
+	<tr>
+		<td width="280"><a href="docs/cd3.png"><img src="docs/cd3.png" alt="Copilot Debugger debug log detail" width="280" height="160"></a></td>
+		<td width="280" height="160">Application previews are shown here.</td>
+	</tr>
+</table>
 
 ## Author
 

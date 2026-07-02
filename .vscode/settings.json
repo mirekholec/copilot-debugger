@@ -1,0 +1,7 @@
+{
+    "github.copilot.chat.commitMessageGeneration.instructions": [
+        {
+            "text": "Write short commit message describing one most important change in the code. Use present tense and imperative mood. English language."
+        }
+    ]
+}
