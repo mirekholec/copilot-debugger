@@ -317,6 +317,7 @@ export default function App() {
           <h2>Connecting to API…</h2>
           <p>Backend is starting up and scanning local storage. Retrying…</p>
         </div>
+        <Footer />
       </main>
     );
   }
@@ -365,6 +366,7 @@ export default function App() {
             </>
           ) : null}
         </section>
+        <Footer />
       </main>
     );
   }
@@ -533,7 +535,22 @@ export default function App() {
           )}
         </aside>
       </section>
+      <Footer />
     </main>
+  );
+}
+
+function Footer() {
+  return (
+    <footer className="app-footer">
+      <a href="https://github.com/mirekholec/vscode-sessions-viewer" target="_blank" rel="noopener noreferrer">
+        github.com/mirekholec/vscode-sessions-viewer
+      </a>
+      <span className="app-footer-sep">·</span>
+      <a href="https://holec.ai" target="_blank" rel="noopener noreferrer">
+        holec.ai
+      </a>
+    </footer>
   );
 }
 
