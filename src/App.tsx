@@ -191,7 +191,7 @@ function loadStoredFilters(): StoredFilters {
 
 const SETTINGS_STORAGE_KEY = 'copilot-debugger.settings';
 const DEFAULT_RATE = 4.8;
-const DEFAULT_CURRENCY = 'USD';
+const DEFAULT_CURRENCY = 'Kč';
 
 interface AppSettings {
   rate: number;
