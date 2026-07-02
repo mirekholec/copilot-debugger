@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowLeft, Bug, Calendar, CheckCircle2, ChevronDown, ChevronRight, Clock3, Coins, Database, ExternalLink, Filter, Pencil, RefreshCw, Search } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Bug, Calendar, CheckCircle2, ChevronDown, ChevronRight, Clock3, Coins, Database, ExternalLink, Filter, RefreshCw, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 interface SourceFileInfo {
@@ -146,9 +146,6 @@ export default function App() {
   const [overview, setOverview] = useState<SessionOverview | null>();
   const [dateFrom, setDateFrom] = useState('2026-06-01');
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
-  const [notesListOpen, setNotesListOpen] = useState(false);
-  const [allNotesOpen, setAllNotesOpen] = useState(false);
-  const [scrollToTurn, setScrollToTurn] = useState<number>();
   const [apiConnecting, setApiConnecting] = useState(true);
   const hasConnectedRef = useRef(false);
 
@@ -224,24 +221,8 @@ export default function App() {
     setDetailSessionId(undefined);
     setTurns(undefined);
     setOverview(undefined);
-    setScrollToTurn(undefined);
     window.history.pushState(null, '', '/');
   }
-
-  function navigateToTurn(sessionId: string, turnIndex: number) {
-    setAllNotesOpen(false);
-    setScrollToTurn(turnIndex);
-    openDetail(sessionId);
-  }
-
-  useEffect(() => {
-    if (scrollToTurn === undefined || !turns) return;
-    const el = document.getElementById(`turn-${scrollToTurn}`);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      setScrollToTurn(undefined);
-    }
-  }, [turns, scrollToTurn]);
 
   useEffect(() => {
     void loadSessions();
@@ -264,7 +245,6 @@ export default function App() {
       setDetailSessionId(undefined);
       setTurns(undefined);
       setOverview(undefined);
-      setScrollToTurn(undefined);
     }
 
     window.addEventListener('popstate', handlePopState);
@@ -345,10 +325,6 @@ export default function App() {
           </div>
         </section>
 
-        {notesListOpen && turns && (
-          <NotesListModal sessionId={detailSessionId} turns={turns} onClose={() => setNotesListOpen(false)} />
-        )}
-
         <section className="turns-area">
           {overview && <SessionOverviewPanel overview={overview} />}
           {turnsLoading ? (
@@ -360,7 +336,7 @@ export default function App() {
               <ToolTokenAnalysis turns={turns} />
               <div className="turns-list">
                 {turns.map((turn) => (
-                  <TurnCard key={turn.index} turn={turn} sessionId={detailSessionId} />
+                  <TurnCard key={turn.index} turn={turn} />
                 ))}
               </div>
             </>
@@ -387,9 +363,6 @@ export default function App() {
             {status === 'error' ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
             <span>{refreshStatusText}</span>
           </div>
-          <button type="button" className="icon-button" onClick={() => setAllNotesOpen(true)} title="Všechny poznámky">
-            <Pencil size={18} aria-hidden="true" />
-          </button>
           <button type="button" className="icon-button" onClick={() => void loadSessions(true)} title="Refresh sessions">
             <RefreshCw size={18} className={isRefreshing ? 'spin' : undefined} aria-hidden="true" />
           </button>
@@ -438,8 +411,6 @@ export default function App() {
       </section>
 
       {error ? <div className="error-banner">{error}</div> : null}
-
-      {allNotesOpen && <AllNotesModal sessions={sessions} onNavigate={navigateToTurn} onClose={() => setAllNotesOpen(false)} />}
 
       <section className="content-grid">
         <div className="session-table" role="region" aria-label="Session list">
@@ -554,53 +525,9 @@ function Footer() {
   );
 }
 
-interface TurnNote { title: string; text: string; }
-
-function readTurnNote(key: string): TurnNote {
-  const raw = localStorage.getItem(key);
-  if (!raw) return { title: '', text: '' };
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (parsed && typeof parsed === 'object' && 'text' in parsed) {
-      return parsed as TurnNote;
-    }
-  } catch { /* ignore */ }
-  return { title: '', text: raw };
-}
-
-function TurnCard({ turn, sessionId }: { turn: TurnInfo; sessionId?: string }) {
+function TurnCard({ turn }: { turn: TurnInfo }) {
   const [expanded, setExpanded] = useState(false);
   const hasActivity = turn.toolCalls.length > 0 || turn.subTurnCount > 0;
-  const noteKey = `turn-note-${sessionId ?? 'unknown'}-${turn.index}`;
-  const [note, setNote] = useState<TurnNote>(() => readTurnNote(noteKey));
-  const [noteOpen, setNoteOpen] = useState(false);
-  const [draftTitle, setDraftTitle] = useState('');
-  const [draftText, setDraftText] = useState('');
-
-  function openNote() {
-    setDraftTitle(note.title);
-    setDraftText(note.text);
-    setNoteOpen(true);
-  }
-
-  function saveNote() {
-    const updated: TurnNote = { title: draftTitle.trim(), text: draftText.trim() };
-    setNote(updated);
-    if (updated.title || updated.text) {
-      localStorage.setItem(noteKey, JSON.stringify(updated));
-    } else {
-      localStorage.removeItem(noteKey);
-    }
-    setNoteOpen(false);
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Escape') {
-      setNoteOpen(false);
-    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      saveNote();
-    }
-  }
 
   return (
     <div className="turn-card" id={`turn-${turn.index}`}>
@@ -628,44 +555,6 @@ function TurnCard({ turn, sessionId }: { turn: TurnInfo; sessionId?: string }) {
           )}
         </div>
       </div>
-      <button
-        type="button"
-        className={`turn-note-btn${(note.title || note.text) ? ' turn-note-btn--has-note' : ''}`}
-        onClick={openNote}
-        title={(note.title || note.text) ? `${note.title ? note.title + ': ' : ''}${note.text}` : 'Přidat poznámku'}
-        aria-label="Poznámka"
-      >
-        <Pencil size={13} aria-hidden="true" />
-      </button>
-
-      {noteOpen && (
-        <div className="turn-note-overlay" onClick={(e) => { if (e.target === e.currentTarget) setNoteOpen(false); }}>
-          <div className="turn-note-popup">
-            <p className="turn-note-popup-title">Poznámka k turnu #{turn.index + 1}</p>
-            <input
-              type="text"
-              className="turn-note-title-input"
-              value={draftTitle}
-              onChange={(e) => setDraftTitle(e.target.value)}
-              placeholder="Nadpis (volitelné)"
-            />
-            <textarea
-              autoFocus
-              className="turn-note-textarea"
-              value={draftText}
-              onChange={(e) => setDraftText(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Napiš poznámku…"
-              rows={4}
-            />
-            <div className="turn-note-actions">
-              <button type="button" className="turn-note-save" onClick={saveNote}>Uložit</button>
-              <button type="button" className="turn-note-cancel" onClick={() => setNoteOpen(false)}>Zrušit</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {expanded && hasActivity && (
         <div className="turn-activity">
           {turn.subTurnCount > 0 && (
@@ -742,112 +631,6 @@ function ToolTokenAnalysis({ turns }: { turns: TurnInfo[] }) {
             <span title={`${formatNumber(row.input + row.output)} C`}>{formatChars(row.input + row.output)}</span>
           </div>
         ))}
-      </div>
-    </div>
-  );
-}
-
-function AllNotesModal({ sessions, onNavigate, onClose }: { sessions: NormalizedSession[]; onNavigate: (sessionId: string, turnIndex: number) => void; onClose: () => void }) {
-  const allNotes = useMemo(() => {
-    const result: { sessionId: string; workspaceName: string; updatedAt: string; turnIndex: number; note: TurnNote }[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key?.startsWith('turn-note-')) continue;
-      const rest = key.slice('turn-note-'.length);
-      const lastDash = rest.lastIndexOf('-');
-      if (lastDash === -1) continue;
-      const sessionId = rest.slice(0, lastDash);
-      const turnIndex = parseInt(rest.slice(lastDash + 1), 10);
-      if (isNaN(turnIndex)) continue;
-      const note = readTurnNote(key);
-      if (!note.title && !note.text) continue;
-      const session = sessions.find((s) => s.id === sessionId);
-      const workspaceName = session?.workspaceName ?? session?.workspaceStorageId ?? sessionId;
-      const updatedAt = session?.updatedAt ?? '';
-      result.push({ sessionId, workspaceName, updatedAt, turnIndex, note });
-    }
-    result.sort((a, b) => a.sessionId.localeCompare(b.sessionId) || a.turnIndex - b.turnIndex);
-    return result;
-  }, [sessions]);
-
-  const grouped = useMemo(() => {
-    const map = new Map<string, typeof allNotes>();
-    for (const item of allNotes) {
-      const arr = map.get(item.sessionId) ?? [];
-      arr.push(item);
-      map.set(item.sessionId, arr);
-    }
-    return [...map.entries()];
-  }, [allNotes]);
-
-  return (
-    <div className="turn-note-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="notes-list-modal notes-list-modal--wide">
-        <div className="notes-list-header">
-          <Pencil size={16} aria-hidden="true" />
-          <span>Všechny poznámky</span>
-          <span className="notes-list-count">{allNotes.length}</span>
-          <button type="button" className="notes-list-close" onClick={onClose} aria-label="Zavřít">✕</button>
-        </div>
-        {grouped.length === 0 ? (
-          <p className="notes-list-empty">Zatím žádné poznámky.</p>
-        ) : (
-          <div className="notes-list-items">
-            {grouped.map(([sessionId, items]) => (
-              <div key={sessionId} className="notes-group">
-                <div className="notes-group-divider" />
-                {items.map(({ turnIndex, note, workspaceName, updatedAt }) => (
-                  <div key={turnIndex} className="notes-list-item notes-list-item--link" onClick={() => onNavigate(sessionId, turnIndex)}>
-                    <div className="notes-list-item-meta">
-                      {updatedAt && <span className="notes-group-date">{formatDateTime(updatedAt)}</span>}
-                      <span className="notes-group-workspace">{workspaceName}</span>
-                    </div>
-                    {note.title && <div className="notes-list-title">{note.title}</div>}
-                    {note.text && <div className="notes-list-text">{note.text}</div>}
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function NotesListModal({ sessionId, turns, onClose }: { sessionId: string; turns: TurnInfo[]; onClose: () => void }) {
-  const notes = turns
-    .map((turn) => {
-      const key = `turn-note-${sessionId}-${turn.index}`;
-      const note = readTurnNote(key);
-      return { turn, note, key };
-    })
-    .filter(({ note }) => note.title || note.text);
-
-  return (
-    <div className="turn-note-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="notes-list-modal">
-        <div className="notes-list-header">
-          <Pencil size={16} aria-hidden="true" />
-          <span>Poznámky</span>
-          <button type="button" className="notes-list-close" onClick={onClose} aria-label="Zavřít">✕</button>
-        </div>
-        {notes.length === 0 ? (
-          <p className="notes-list-empty">Žádné poznámky k této session.</p>
-        ) : (
-          <div className="notes-list-items">
-            {notes.map(({ turn, note, key }) => (
-              <div key={key} className="notes-list-item">
-                <div className="notes-list-item-meta">
-                  <span className="notes-list-turn">#{turn.index + 1}</span>
-                  <span className="notes-list-turn-msg">{turn.userMessage ?? '(no message)'}</span>
-                </div>
-                {note.title && <div className="notes-list-title">{note.title}</div>}
-                {note.text && <div className="notes-list-text">{note.text}</div>}
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );
