@@ -5,7 +5,12 @@ import path from 'node:path';
 import readline from 'node:readline';
 import chokidar, { type FSWatcher } from 'chokidar';
 import fg from 'fast-glob';
-import type { AgentInfo, AttachmentInfo, ContextSizes, NormalizedSession, SessionOverview, SessionSource, SessionSourceSnapshot, SkillInfo, ToolCallInfo, ToolInfo, TurnInfo } from './SessionSource.js';
+import type { AgentInfo, AgentTurnInfo, AttachmentInfo, ContextSizes, NormalizedSession, SessionOverview, SessionSource, SessionSourceSnapshot, SkillInfo, ToolCallInfo, ToolInfo, TurnInfo } from './SessionSource.js';
+
+// debugName values for internal Copilot side-requests that are not part of the actual
+// conversation (e.g. auto-generated chat tab titles). These are excluded from cost/model
+// stats so they don't pollute usage numbers with models the user never actually picked.
+const EXCLUDED_COST_DEBUG_NAMES = new Set<string>(['title']);
 
 interface VsCodeTranscriptSourceOptions {
   workspaceStorageRoot: string;
@@ -40,6 +45,7 @@ interface SessionAccumulator {
     cachedTokens: number;
     requestCount: number;
     models: Set<string>;
+    perModel: Map<string, { aiCredits: number; inputTokens: number; outputTokens: number; cachedTokens: number; requestCount: number }>;
   };
 }
 
@@ -226,7 +232,8 @@ export class VsCodeTranscriptSource implements SessionSource {
         outputTokens: 0,
         cachedTokens: 0,
         requestCount: 0,
-        models: new Set<string>()
+        models: new Set<string>(),
+        perModel: new Map()
       }
     };
 
@@ -387,12 +394,29 @@ export class VsCodeTranscriptSource implements SessionSource {
         outputTokens: accumulator.cost.outputTokens || undefined,
         cachedTokens: accumulator.cost.cachedTokens || undefined,
         requestCount: accumulator.cost.requestCount || undefined,
-        models: [...accumulator.cost.models].sort()
+        models: [...accumulator.cost.models].sort(),
+        perModel: [...accumulator.cost.perModel.entries()]
+          .map(([model, stats]) => ({
+            model,
+            aiCredits: stats.aiCredits || undefined,
+            inputTokens: stats.inputTokens || undefined,
+            outputTokens: stats.outputTokens || undefined,
+            cachedTokens: stats.cachedTokens || undefined,
+            requestCount: stats.requestCount || undefined
+          }))
+          .sort((a, b) => (b.aiCredits ?? 0) - (a.aiCredits ?? 0) || a.model.localeCompare(b.model))
       }
     };
   }
 
   private consumeCost(accumulator: SessionAccumulator, fields: Record<string, unknown>): void {
+    // Skip internal side-requests (e.g. title generation) entirely, so they never
+    // show up as tokens/credits/models in the session stats.
+    const debugName = this.findString(fields, ['debugName']);
+    if (debugName && EXCLUDED_COST_DEBUG_NAMES.has(debugName)) {
+      return;
+    }
+
     const nanoAiu = this.findNumber(fields, ['copilotUsageNanoAiu', 'copilotUsageNanoAIU', 'copilot_usage_nano_aiu']);
     if (nanoAiu !== undefined) {
       accumulator.cost.aiCredits = (accumulator.cost.aiCredits ?? 0) + nanoAiu / 1_000_000_000;
@@ -413,6 +437,26 @@ export class VsCodeTranscriptSource implements SessionSource {
     const model = this.findString(fields, ['usage_model', 'model', 'modelName', 'model_name']);
     if (model) {
       accumulator.cost.models.add(model);
+
+      if (nanoAiu !== undefined || inputTokens !== undefined || outputTokens !== undefined || cachedTokens !== undefined) {
+        const modelStats = accumulator.cost.perModel.get(model) ?? {
+          aiCredits: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          requestCount: 0
+        };
+        if (nanoAiu !== undefined) {
+          modelStats.aiCredits += nanoAiu / 1_000_000_000;
+        }
+        if (inputTokens !== undefined || outputTokens !== undefined || cachedTokens !== undefined) {
+          modelStats.requestCount += 1;
+          modelStats.inputTokens += inputTokens ?? 0;
+          modelStats.outputTokens += outputTokens ?? 0;
+          modelStats.cachedTokens += cachedTokens ?? 0;
+        }
+        accumulator.cost.perModel.set(model, modelStats);
+      }
     }
   }
 
@@ -768,6 +812,115 @@ export class VsCodeTranscriptSource implements SessionSource {
     }
   }
 
+  // Finds sibling runSubagent-*.jsonl files next to the given debug-log file and parses
+  // each into its own list of agent turns, keyed by the parentSpanId that links back to
+  // the 'runSubagent' tool_call in the parent log (see the 'subagent' entry at the end
+  // of the subagent file).
+  private async parseSubagentFiles(filePath: string): Promise<Map<string, { agentName?: string; turns: AgentTurnInfo[] }>> {
+    const result = new Map<string, { agentName?: string; turns: AgentTurnInfo[] }>();
+    const dir = path.dirname(filePath);
+    let files: string[] = [];
+    try {
+      files = await fg(path.join(dir, 'runSubagent-*.jsonl').replace(/\\/g, '/'), {
+        onlyFiles: true,
+        suppressErrors: true
+      });
+    } catch {
+      return result;
+    }
+
+    for (const file of files) {
+      interface LlmReq {
+        ts: number;
+        model?: string;
+        inputTokens: number;
+        outputTokens: number;
+        cachedTokens: number;
+        nanoAiu: number;
+      }
+      interface ToolCall {
+        ts: number;
+        name: string;
+        args: Record<string, unknown>;
+        inputChars: number;
+        outputChars: number;
+      }
+
+      const llmRequests: LlmReq[] = [];
+      const toolCalls: ToolCall[] = [];
+      let linkParentSpanId: string | undefined;
+      let agentName: string | undefined;
+
+      await this.readJsonl(file, (entry) => {
+        if (!entry || typeof entry !== 'object') return;
+        const rec = entry as Record<string, unknown>;
+        const type = typeof rec.type === 'string' ? rec.type : undefined;
+        const attrs = this.asRecord(rec.attrs);
+        const parentSpanId = typeof rec.parentSpanId === 'string' ? rec.parentSpanId : undefined;
+        const tsRaw = rec.ts;
+        const ts = typeof tsRaw === 'number' ? (tsRaw > 10_000_000_000 ? tsRaw : tsRaw * 1000) : Date.now();
+
+        if (type === 'llm_request') {
+          const fields = { ...attrs };
+          const model = typeof fields.model === 'string' ? fields.model : undefined;
+          const inputTokens = typeof fields.inputTokens === 'number' ? fields.inputTokens : 0;
+          const outputTokens = typeof fields.outputTokens === 'number' ? fields.outputTokens : 0;
+          const cachedTokens = typeof fields.cachedTokens === 'number' ? fields.cachedTokens : 0;
+          const nanoAiu = typeof fields.copilotUsageNanoAiu === 'number' ? fields.copilotUsageNanoAiu : 0;
+          llmRequests.push({ ts, model, inputTokens, outputTokens, cachedTokens, nanoAiu });
+        }
+
+        if (type === 'tool_call') {
+          const name = typeof rec.name === 'string' ? rec.name : undefined;
+          if (name) {
+            const argsRaw = serializeUnknown(attrs.args ?? {});
+            const resultRaw = serializeUnknown(attrs.result ?? '');
+            let args: Record<string, unknown> = {};
+            try {
+              args = JSON.parse(argsRaw) as Record<string, unknown>;
+            } catch { /* ignore */ }
+            toolCalls.push({ ts, name, args, inputChars: resultRaw.length, outputChars: argsRaw.length });
+          }
+        }
+
+        if (type === 'subagent') {
+          linkParentSpanId = parentSpanId;
+          agentName = typeof attrs.agentName === 'string' ? attrs.agentName : undefined;
+        }
+      });
+
+      if (!linkParentSpanId) {
+        continue;
+      }
+
+      const reqs = [...llmRequests].sort((a, b) => a.ts - b.ts);
+      const sortedTools = [...toolCalls].sort((a, b) => a.ts - b.ts);
+      const turns: AgentTurnInfo[] = reqs.map((r, turnIndex) => {
+        const nextTurnTs = reqs[turnIndex + 1]?.ts ?? Infinity;
+        const toolsForTurn = sortedTools.filter((tc) => tc.ts >= r.ts && tc.ts < nextTurnTs);
+        return {
+          index: turnIndex,
+          model: r.model,
+          inputTokens: r.inputTokens,
+          outputTokens: r.outputTokens,
+          cachedTokens: r.cachedTokens,
+          aiCredits: r.nanoAiu > 0 ? r.nanoAiu / 1_000_000_000 : undefined,
+          timestamp: new Date(r.ts).toISOString(),
+          toolCalls: toolsForTurn.map((tc) => ({
+            name: tc.name,
+            detail: extractToolDetail(tc.name, tc.args),
+            inputChars: tc.inputChars,
+            outputChars: tc.outputChars
+          }))
+        };
+      });
+
+      result.set(linkParentSpanId, { agentName, turns });
+    }
+
+    return result;
+  }
+
   private async parseTurns(filePath: string): Promise<TurnInfo[]> {
     interface UserMsg {
       spanId: string;
@@ -787,6 +940,8 @@ export class VsCodeTranscriptSource implements SessionSource {
 
     interface ToolCall {
       parentSpanId: string;
+      spanId?: string;
+      ts: number;
       name: string;
       args: Record<string, unknown>;
       inputChars: number;
@@ -796,7 +951,6 @@ export class VsCodeTranscriptSource implements SessionSource {
     const userMessages: UserMsg[] = [];
     const llmRequests: LlmReq[] = [];
     const toolCalls: ToolCall[] = [];
-    const subTurnParents = new Map<string, number>();
     const browserParents = new Set<string>();
 
     await this.readJsonl(filePath, (entry) => {
@@ -839,6 +993,8 @@ export class VsCodeTranscriptSource implements SessionSource {
           } catch { /* ignore */ }
           toolCalls.push({
             parentSpanId,
+            spanId,
+            ts,
             name,
             args,
             inputChars: resultRaw.length,
@@ -847,15 +1003,12 @@ export class VsCodeTranscriptSource implements SessionSource {
         }
       }
 
-      // turn_start spanId format: "turn_start-{userMsgSpanId}-{index}"
-      if (type === 'turn_start' && spanId) {
-        const match = /^turn_start-(.+)-\d+$/.exec(spanId);
-        if (match) {
-          const userMsgSpanId = match[1];
-          subTurnParents.set(userMsgSpanId, (subTurnParents.get(userMsgSpanId) ?? 0) + 1);
-        }
-      }
     });
+
+    // A tool_call named 'runSubagent' can have its own log file (runSubagent-<label>_<id>.jsonl)
+    // sitting next to this one, containing the subagent's own llm_requests/tool_calls. That
+    // file links back via a 'subagent' entry whose parentSpanId equals this tool_call's spanId.
+    const subagentByToolSpanId = await this.parseSubagentFiles(filePath);
 
     // Group llm_requests by parentSpanId
     const llmByParent = new Map<string, LlmReq[]>();
@@ -865,29 +1018,56 @@ export class VsCodeTranscriptSource implements SessionSource {
       llmByParent.set(req.parentSpanId, list);
     }
 
-    // Group tool_calls by parentSpanId
-    const toolsByParent = new Map<string, ToolCallInfo[]>();
+    // Group tool_calls by parentSpanId (round), keeping ts so they can be bucketed into turns below
+    const toolsByParent = new Map<string, ToolCall[]>();
     for (const tc of toolCalls) {
       const list = toolsByParent.get(tc.parentSpanId) ?? [];
-      list.push({
-        name: tc.name,
-        detail: extractToolDetail(tc.name, tc.args),
-        inputChars: tc.inputChars,
-        outputChars: tc.outputChars
-      });
+      list.push(tc);
       toolsByParent.set(tc.parentSpanId, list);
     }
 
+    const toToolCallInfo = (tc: ToolCall): ToolCallInfo => {
+      const subagent = tc.spanId ? subagentByToolSpanId.get(tc.spanId) : undefined;
+      return {
+        name: tc.name,
+        detail: extractToolDetail(tc.name, tc.args),
+        inputChars: tc.inputChars,
+        outputChars: tc.outputChars,
+        subagentName: subagent?.agentName,
+        subagentTurns: subagent?.turns
+      };
+    };
+
     const turns: TurnInfo[] = userMessages.map((msg, index) => {
-      const reqs = llmByParent.get(msg.spanId) ?? [];
+      const reqs = [...(llmByParent.get(msg.spanId) ?? [])].sort((a, b) => a.ts - b.ts);
       const models = [...new Set(reqs.map((r) => r.model).filter((m): m is string => !!m))].sort();
       const inputTokens = reqs.reduce((sum, r) => sum + r.inputTokens, 0);
       const outputTokens = reqs.reduce((sum, r) => sum + r.outputTokens, 0);
       const cachedTokens = reqs.reduce((sum, r) => sum + r.cachedTokens, 0);
       const totalNanoAiu = reqs.reduce((sum, r) => sum + r.nanoAiu, 0);
       const aiCredits = totalNanoAiu > 0 ? totalNanoAiu / 1_000_000_000 : undefined;
-      const tools = toolsByParent.get(msg.spanId) ?? [];
-      const subTurnCount = subTurnParents.get(msg.spanId) ?? 0;
+      const roundTools = [...(toolsByParent.get(msg.spanId) ?? [])].sort((a, b) => a.ts - b.ts);
+
+      // Each LLM request is one agent turn inside this round. Models can differ between
+      // turns within the same round (e.g. a subagent call runs on a different model),
+      // so expose them individually instead of only the deduped `models` summary.
+      // Tool calls are nested under the turn that triggered them: a tool call always
+      // happens after the turn that requested it and before the next turn starts, so
+      // bucket by "latest turn whose request started at or before the tool call".
+      const agentTurns: AgentTurnInfo[] = reqs.map((r, turnIndex) => {
+        const nextTurnTs = reqs[turnIndex + 1]?.ts ?? Infinity;
+        const toolsForTurn = roundTools.filter((tc) => tc.ts >= r.ts && tc.ts < nextTurnTs);
+        return {
+          index: turnIndex,
+          model: r.model,
+          inputTokens: r.inputTokens,
+          outputTokens: r.outputTokens,
+          cachedTokens: r.cachedTokens,
+          aiCredits: r.nanoAiu > 0 ? r.nanoAiu / 1_000_000_000 : undefined,
+          timestamp: new Date(r.ts).toISOString(),
+          toolCalls: toolsForTurn.map(toToolCallInfo)
+        };
+      });
 
       const hasBrowserContext = browserParents.has(msg.spanId);
 
@@ -901,8 +1081,8 @@ export class VsCodeTranscriptSource implements SessionSource {
         cachedTokens,
         aiCredits,
         llmRequestCount: reqs.length,
-        toolCalls: tools,
-        subTurnCount,
+        toolCalls: roundTools.map(toToolCallInfo),
+        turns: agentTurns,
         hasBrowserContext
       };
     });

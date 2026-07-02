@@ -1,9 +1,28 @@
-import { AlertCircle, ArrowLeft, Bug, Calendar, CheckCircle2, ChevronDown, ChevronRight, Clock3, Coins, Database, ExternalLink, Filter, RefreshCw, Search } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Bug, Calendar, ChevronDown, ChevronRight, Clock3, Coins, ExternalLink, Filter, RefreshCw, Search, Settings as SettingsIcon } from 'lucide-react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 interface SourceFileInfo {
   transcript?: string;
   debugLog?: string;
+}
+
+interface ModelCostInfo {
+  model: string;
+  aiCredits?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cachedTokens?: number;
+  requestCount?: number;
+}
+
+interface ModelAggregateRow {
+  model: string;
+  aiCredits: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  requestCount: number;
+  sessionCount: number;
 }
 
 interface NormalizedSession {
@@ -31,6 +50,7 @@ interface NormalizedSession {
     cachedTokens?: number;
     requestCount?: number;
     models: string[];
+    perModel: ModelCostInfo[];
   };
 }
 
@@ -39,6 +59,21 @@ interface ToolCallInfo {
   detail?: string;
   inputChars: number;
   outputChars: number;
+  subagentName?: string;
+  subagentTurns?: AgentTurnInfo[];
+}
+
+// One individual agent LLM call inside a round. Models can differ between turns
+// within the same round (e.g. a subagent call runs on a different model).
+interface AgentTurnInfo {
+  index: number;
+  model?: string;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  aiCredits?: number;
+  timestamp: string;
+  toolCalls: ToolCallInfo[];
 }
 
 interface TurnInfo {
@@ -52,7 +87,7 @@ interface TurnInfo {
   aiCredits?: number;
   llmRequestCount: number;
   toolCalls: ToolCallInfo[];
-  subTurnCount: number;
+  turns: AgentTurnInfo[];
   hasBrowserContext: boolean;
 }
 
@@ -113,11 +148,116 @@ type LoadState = 'loading' | 'ready' | 'error';
 
 const SESSION_ROUTE_PREFIX = '/sessions/';
 
+type AppPage = 'sessions' | 'models' | 'settings';
+
+function toLocalDateInput(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function defaultDateFrom(): string {
+  const now = new Date();
+  return toLocalDateInput(new Date(now.getFullYear(), now.getMonth(), 1));
+}
+
+function defaultDateTo(): string {
+  return toLocalDateInput(new Date());
+}
+
+const FILTERS_STORAGE_KEY = 'copilot-debugger.filters';
+
+interface StoredFilters {
+  dateFrom: string;
+  dateTo: string;
+  workspaceFilter: string;
+}
+
+function loadStoredFilters(): StoredFilters {
+  try {
+    const raw = window.localStorage.getItem(FILTERS_STORAGE_KEY);
+    if (!raw) return { dateFrom: defaultDateFrom(), dateTo: defaultDateTo(), workspaceFilter: 'all' };
+    const parsed = JSON.parse(raw) as Partial<StoredFilters>;
+    return {
+      dateFrom: typeof parsed.dateFrom === 'string' && parsed.dateFrom ? parsed.dateFrom : defaultDateFrom(),
+      dateTo: typeof parsed.dateTo === 'string' && parsed.dateTo ? parsed.dateTo : defaultDateTo(),
+      workspaceFilter: typeof parsed.workspaceFilter === 'string' && parsed.workspaceFilter ? parsed.workspaceFilter : 'all'
+    };
+  } catch {
+    return { dateFrom: defaultDateFrom(), dateTo: defaultDateTo(), workspaceFilter: 'all' };
+  }
+}
+
+const SETTINGS_STORAGE_KEY = 'copilot-debugger.settings';
+const DEFAULT_RATE = 4.8;
+const DEFAULT_CURRENCY = 'USD';
+
+interface AppSettings {
+  rate: number;
+  currency: string;
+}
+
+function loadStoredSettings(): AppSettings {
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return { rate: DEFAULT_RATE, currency: DEFAULT_CURRENCY };
+    const parsed = JSON.parse(raw) as Partial<AppSettings>;
+    return {
+      rate: typeof parsed.rate === 'number' && parsed.rate > 0 ? parsed.rate : DEFAULT_RATE,
+      currency: typeof parsed.currency === 'string' && parsed.currency.trim() ? parsed.currency : DEFAULT_CURRENCY
+    };
+  } catch {
+    return { rate: DEFAULT_RATE, currency: DEFAULT_CURRENCY };
+  }
+}
+
+const SettingsContext = createContext<{
+  rate: number;
+  currency: string;
+  setRate: (rate: number) => void;
+  setCurrency: (currency: string) => void;
+} | null>(null);
+
+function useSettings() {
+  const ctx = useContext(SettingsContext);
+  if (!ctx) throw new Error('useSettings must be used within SettingsProvider');
+  return ctx;
+}
+
+function SettingsProvider({ children }: { children: ReactNode }) {
+  const [settings, setSettings] = useState<AppSettings>(() => loadStoredSettings());
+
+  function persist(next: AppSettings) {
+    setSettings(next);
+    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(next));
+  }
+
+  return (
+    <SettingsContext.Provider
+      value={{
+        rate: settings.rate,
+        currency: settings.currency,
+        setRate: (rate) => persist({ ...settings, rate }),
+        setCurrency: (currency) => persist({ ...settings, currency })
+      }}
+    >
+      {children}
+    </SettingsContext.Provider>
+  );
+}
+
 function getRouteSessionId() {
   if (!window.location.pathname.startsWith(SESSION_ROUTE_PREFIX)) return undefined;
   const encodedId = window.location.pathname.slice(SESSION_ROUTE_PREFIX.length);
   if (!encodedId) return undefined;
   return decodeURIComponent(encodedId);
+}
+
+function getRoutePage(): AppPage {
+  if (window.location.pathname.startsWith('/models')) return 'models';
+  if (window.location.pathname.startsWith('/settings')) return 'settings';
+  return 'sessions';
 }
 
 function sessionUrl(id: string) {
@@ -132,28 +272,38 @@ function formatChars(value: number) {
 }
 
 export default function App() {
+  return (
+    <SettingsProvider>
+      <AppInner />
+    </SettingsProvider>
+  );
+}
+
+function AppInner() {
+  const { rate, currency } = useSettings();
   const [sessions, setSessions] = useState<NormalizedSession[]>([]);
   const [status, setStatus] = useState<LoadState>('loading');
   const [error, setError] = useState<string>();
-  const [lastRefreshAt, setLastRefreshAt] = useState<string>();
   const [query, setQuery] = useState('');
-  const [workspaceFilter, setWorkspaceFilter] = useState('all');
+  const [workspaceFilter, setWorkspaceFilter] = useState(() => loadStoredFilters().workspaceFilter);
+  const [page, setPage] = useState<AppPage>(() => getRoutePage());
   const [detailSessionId, setDetailSessionId] = useState<string | undefined>(() => getRouteSessionId());
   const [turns, setTurns] = useState<TurnInfo[]>();
   const [turnsLoading, setTurnsLoading] = useState(false);
   const [selectedId, setSelectedId] = useState<string>();
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [overview, setOverview] = useState<SessionOverview | null>();
-  const [dateFrom, setDateFrom] = useState('2026-06-01');
-  const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dateFrom, setDateFrom] = useState(() => loadStoredFilters().dateFrom);
+  const [dateTo, setDateTo] = useState(() => loadStoredFilters().dateTo);
   const [apiConnecting, setApiConnecting] = useState(true);
   const hasConnectedRef = useRef(false);
 
-  async function loadSessions(showSpinner = false) {
+  useEffect(() => {
+    const filters: StoredFilters = { dateFrom, dateTo, workspaceFilter };
+    window.localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(filters));
+  }, [dateFrom, dateTo, workspaceFilter]);
+
+  async function loadSessions() {
     try {
-      if (showSpinner) {
-        setIsRefreshing(true);
-      }
       const response = await fetch('/api/sessions');
       if (!response.ok) {
         throw new Error(`API returned ${response.status}`);
@@ -168,7 +318,6 @@ export default function App() {
       hasConnectedRef.current = true;
       setApiConnecting(false);
       setSessions(payload.sessions);
-      setLastRefreshAt(payload.lastRefreshAt);
       setError(payload.error);
       setStatus(payload.error ? 'error' : 'ready');
     } catch (caught) {
@@ -180,8 +329,6 @@ export default function App() {
       }
       setStatus('error');
       setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setIsRefreshing(false);
     }
   }
 
@@ -217,11 +364,13 @@ export default function App() {
     }
   }
 
-  function closeDetail() {
+  function navigateToPage(target: AppPage) {
+    if (target === page && !detailSessionId) return;
+    setPage(target);
     setDetailSessionId(undefined);
     setTurns(undefined);
     setOverview(undefined);
-    window.history.pushState(null, '', '/');
+    window.history.pushState(null, '', target === 'models' ? '/models' : target === 'settings' ? '/settings' : '/');
   }
 
   useEffect(() => {
@@ -236,6 +385,7 @@ export default function App() {
 
   useEffect(() => {
     function handlePopState() {
+      setPage(getRoutePage());
       const routeSessionId = getRouteSessionId();
       if (routeSessionId) {
         openDetail(routeSessionId, false);
@@ -252,10 +402,23 @@ export default function App() {
   }, []);
 
   const workspaces = useMemo(() => {
+    const fromDate = dateFrom ? new Date(dateFrom + 'T00:00:00') : null;
+    const toDate = dateTo ? new Date(dateTo + 'T23:59:59') : null;
     const names = new Set<string>();
-    sessions.forEach((session) => names.add(session.workspaceName ?? session.workspaceStorageId));
+    sessions.forEach((session) => {
+      const updatedAt = new Date(session.updatedAt);
+      if (fromDate && updatedAt < fromDate) return;
+      if (toDate && updatedAt > toDate) return;
+      names.add(session.workspaceName ?? session.workspaceStorageId);
+    });
     return [...names].sort();
-  }, [sessions]);
+  }, [sessions, dateFrom, dateTo]);
+
+  useEffect(() => {
+    if (workspaceFilter !== 'all' && !workspaces.includes(workspaceFilter)) {
+      setWorkspaceFilter('all');
+    }
+  }, [workspaces, workspaceFilter]);
 
   const filteredSessions = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -276,18 +439,75 @@ export default function App() {
     });
   }, [workspaceFilter, query, sessions, dateFrom, dateTo]);
 
+  const modelsPageSessions = useMemo(() => {
+    const fromDate = dateFrom ? new Date(dateFrom + 'T00:00:00') : null;
+    const toDate = dateTo ? new Date(dateTo + 'T23:59:59') : null;
+    return sessions.filter((session) => {
+      const updatedAt = new Date(session.updatedAt);
+      if (fromDate && updatedAt < fromDate) return false;
+      if (toDate && updatedAt > toDate) return false;
+      const sessionWorkspace = session.workspaceName ?? session.workspaceStorageId;
+      return workspaceFilter === 'all' || sessionWorkspace === workspaceFilter;
+    });
+  }, [sessions, dateFrom, dateTo, workspaceFilter]);
+
+  const modelRows = useMemo(() => {
+    const map = new Map<string, ModelAggregateRow>();
+    const ensure = (name: string) => {
+      let entry = map.get(name);
+      if (!entry) {
+        entry = { model: name, aiCredits: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, requestCount: 0, sessionCount: 0 };
+        map.set(name, entry);
+      }
+      return entry;
+    };
+    for (const session of modelsPageSessions) {
+      const usedModels = new Set(session.cost.models);
+      for (const modelCost of session.cost.perModel) {
+        usedModels.add(modelCost.model);
+        const entry = ensure(modelCost.model);
+        entry.aiCredits += modelCost.aiCredits ?? 0;
+        entry.inputTokens += modelCost.inputTokens ?? 0;
+        entry.outputTokens += modelCost.outputTokens ?? 0;
+        entry.cachedTokens += modelCost.cachedTokens ?? 0;
+        entry.requestCount += modelCost.requestCount ?? 0;
+      }
+      for (const modelName of usedModels) {
+        ensure(modelName).sessionCount += 1;
+      }
+    }
+    return [...map.values()].sort((a, b) => b.aiCredits - a.aiCredits || b.requestCount - a.requestCount || a.model.localeCompare(b.model));
+  }, [modelsPageSessions]);
+
+  const modelHighlights = useMemo(() => {
+    if (modelRows.length === 0) return undefined;
+    return {
+      mostUsed: [...modelRows].sort((a, b) => b.sessionCount - a.sessionCount || b.requestCount - a.requestCount)[0],
+      topAic: [...modelRows].sort((a, b) => b.aiCredits - a.aiCredits)[0],
+      topInput: [...modelRows].sort((a, b) => b.inputTokens - a.inputTokens)[0],
+      topOutput: [...modelRows].sort((a, b) => b.outputTokens - a.outputTokens)[0]
+    };
+  }, [modelRows]);
+
+  const modelTotals = useMemo(
+    () =>
+      modelRows.reduce(
+        (acc, row) => ({
+          requestCount: acc.requestCount + row.requestCount,
+          aiCredits: acc.aiCredits + row.aiCredits,
+          inputTokens: acc.inputTokens + row.inputTokens,
+          outputTokens: acc.outputTokens + row.outputTokens,
+          cachedTokens: acc.cachedTokens + row.cachedTokens
+        }),
+        { requestCount: 0, aiCredits: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0 }
+      ),
+    [modelRows]
+  );
+
   const selectedSession = filteredSessions.find((session) => session.id === selectedId) ?? filteredSessions[0];
-  const selectedCost = selectedSession?.cost ?? { models: [] };
+  const selectedCost = selectedSession?.cost ?? { models: [], perModel: [] };
   const detailSession = sessions.find((s) => s.id === detailSessionId);
   const filteredAiCredits = filteredSessions.reduce((sum, session) => sum + (session.cost.aiCredits ?? 0), 0);
-  const refreshStatusText =
-    status === 'loading'
-      ? 'Loading'
-      : status === 'error'
-        ? 'Needs attention'
-        : lastRefreshAt
-          ? `Upd. ${formatShortDateTime(lastRefreshAt)}`
-          : 'Waiting for refresh';
 
   if (apiConnecting) {
     return (
@@ -303,27 +523,21 @@ export default function App() {
   }
 
   if (detailSessionId) {
-    const detailCost = detailSession?.cost ?? { models: [] };
+    const detailCost = detailSession?.cost ?? { models: [], perModel: [] };
     return (
       <main className="app-shell">
-        <section className="toolbar detail-toolbar" aria-label="Session detail toolbar">
-          <button type="button" className="back-button" onClick={closeDetail}>
-            <ArrowLeft size={17} aria-hidden="true" />
-            Back to sessions
-          </button>
-          <div className="detail-title-block">
-            <h1>{detailSession?.firstUserMessage ?? detailSession?.id ?? detailSessionId}</h1>
-            <span>{detailSession ? `${detailSession.producer} · ${formatDateTime(detailSession.updatedAt)}` : 'Loading session metadata'}</span>
-          </div>
-          <div className="detail-toolbar-right">
+        <AppHeader
+          page={page}
+          onNavigate={navigateToPage}
+          costSummary={
             <div className="cost-summary-pill">
-              <Coins size={15} aria-hidden="true" />
+              <Coins size={14} aria-hidden="true" />
               {detailCost.aiCredits !== undefined
-                ? <strong>{formatAic(detailCost.aiCredits)} AIC <span className="kc-price">({aicToKc(detailCost.aiCredits)} Kč)</span></strong>
+                ? <strong>{formatAic(detailCost.aiCredits)} AIC <span className="kc-price">({aicToKc(detailCost.aiCredits, rate)} {currency})</span></strong>
                 : <span>No AIC data</span>}
             </div>
-          </div>
-        </section>
+          }
+        />
 
         <section className="turns-area">
           {overview && <SessionOverviewPanel overview={overview} />}
@@ -347,32 +561,163 @@ export default function App() {
     );
   }
 
+  if (page === 'settings') {
+    return (
+      <main className="app-shell">
+        <AppHeader page={page} onNavigate={navigateToPage} />
+        <SettingsPage />
+        <Footer />
+      </main>
+    );
+  }
+
+  if (page === 'models') {
+    const modelsAiCredits = modelsPageSessions.reduce((sum, session) => sum + (session.cost.aiCredits ?? 0), 0);
+    return (
+      <main className="app-shell">
+        <AppHeader
+          page={page}
+          onNavigate={navigateToPage}
+          costSummary={
+            <div className="cost-summary-pill">
+              <Coins size={14} aria-hidden="true" />
+              <strong>{formatAic(modelsAiCredits)} AIC</strong> <span className="kc-price">({aicToKc(modelsAiCredits, rate)} {currency})</span>
+            </div>
+          }
+        />
+
+        {modelHighlights ? (
+          <section className="model-highlights" aria-label="Model usage highlights">
+            <div className="model-highlight-card">
+              <span className="model-highlight-label">Most Used</span>
+              <strong className="model-highlight-value">{modelHighlights.mostUsed.model}</strong>
+              <span className="model-highlight-meta">{formatNumber(modelHighlights.mostUsed.sessionCount)} sessions · {formatNumber(modelHighlights.mostUsed.requestCount)} req</span>
+            </div>
+            <div className="model-highlight-card">
+              <span className="model-highlight-label">Top AIC</span>
+              <strong className="model-highlight-value">{modelHighlights.topAic.model}</strong>
+              <span className="model-highlight-meta">{formatAic(modelHighlights.topAic.aiCredits)} AIC</span>
+            </div>
+            <div className="model-highlight-card">
+              <span className="model-highlight-label">Top Input Tokens</span>
+              <strong className="model-highlight-value">{modelHighlights.topInput.model}</strong>
+              <span className="model-highlight-meta">{formatNumber(modelHighlights.topInput.inputTokens)} in</span>
+            </div>
+            <div className="model-highlight-card">
+              <span className="model-highlight-label">Top Output Tokens</span>
+              <strong className="model-highlight-value">{modelHighlights.topOutput.model}</strong>
+              <span className="model-highlight-meta">{formatNumber(modelHighlights.topOutput.outputTokens)} out</span>
+            </div>
+          </section>
+        ) : null}
+
+        <section className="filters" aria-label="Model filters">
+          <label className="date-box">
+            <Calendar size={17} aria-hidden="true" />
+            <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} title="From date" />
+          </label>
+
+          <label className="date-box">
+            <Calendar size={17} aria-hidden="true" />
+            <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} title="To date" />
+          </label>
+
+          <label className="select-box">
+            <Filter size={17} aria-hidden="true" />
+            <select value={workspaceFilter} onChange={(event) => setWorkspaceFilter(event.target.value)}>
+              <option value="all">All workspaces</option>
+              {workspaces.map((ws) => (
+                <option key={ws} value={ws}>
+                  {ws.length > 25 ? ws.slice(0, 25) + '…' : ws}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="meta-strip" aria-label="Filtered models summary">
+            <span className="meta-count">
+              <strong>{modelRows.length}</strong>
+              <span>models</span>
+            </span>
+          </div>
+        </section>
+
+        {error ? <div className="error-banner">{error}</div> : null}
+
+        <section className="models-table" role="region" aria-label="Model usage list">
+          {status === 'loading' ? <StateMessage title="Loading sessions" detail="Scanning local VS Code storage." /> : null}
+          {status !== 'loading' && modelRows.length === 0 ? (
+            <StateMessage title="No model data found" detail="No sessions with model usage match current filters." />
+          ) : null}
+          {modelRows.length > 0 ? (
+            <div className="models-table-grid">
+              <div className="models-row models-row--head">
+                <span>Model</span>
+                <span>Sessions</span>
+                <span>Requests</span>
+                <span>AIC</span>
+                <span>Price</span>
+                <span>Input</span>
+                <span>Output</span>
+                <span>Cached</span>
+              </div>
+              {modelRows.map((row) => (
+                <div key={row.model} className="models-row">
+                  <span className="models-row-name">{row.model}</span>
+                  <span>{formatNumber(row.sessionCount)}</span>
+                  <span>{formatNumber(row.requestCount)}</span>
+                  <span className="models-row-aic">{formatAic(row.aiCredits)}</span>
+                  <span className="models-row-price">{aicToKc(row.aiCredits, rate)} {currency}</span>
+                  <span>{formatNumber(row.inputTokens)}</span>
+                  <span>{formatNumber(row.outputTokens)}</span>
+                  <span>{formatNumber(row.cachedTokens)}</span>
+                </div>
+              ))}
+              <div className="models-row models-row--total">
+                <span className="models-row-name">Total</span>
+                <span>{formatNumber(modelsPageSessions.length)}</span>
+                <span>{formatNumber(modelTotals.requestCount)}</span>
+                <span className="models-row-aic">{formatAic(modelTotals.aiCredits)}</span>
+                <span className="models-row-price">{aicToKc(modelTotals.aiCredits, rate)} {currency}</span>
+                <span>{formatNumber(modelTotals.inputTokens)}</span>
+                <span>{formatNumber(modelTotals.outputTokens)}</span>
+                <span>{formatNumber(modelTotals.cachedTokens)}</span>
+              </div>
+            </div>
+          ) : null}
+        </section>
+        <Footer />
+      </main>
+    );
+  }
+
   return (
     <main className="app-shell">
-      <section className="toolbar" aria-label="Sessions toolbar">
-        <div className="title-block">
-          <div className="title-row">
-            <Database size={22} aria-hidden="true" />
-            <h1>VS Code Sessions</h1>
+      <AppHeader
+        page={page}
+        onNavigate={navigateToPage}
+        costSummary={
+          <div className="cost-summary-pill">
+            <Coins size={14} aria-hidden="true" />
+            <strong>{formatAic(filteredAiCredits)} AIC</strong> <span className="kc-price">({aicToKc(filteredAiCredits, rate)} {currency})</span>
           </div>
-          <p>Local Copilot Chat transcripts and debug logs</p>
-        </div>
-
-        <div className="toolbar-actions">
-          <div className="status-pill" title="Backend refresh status">
-            {status === 'error' ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
-            <span>{refreshStatusText}</span>
-          </div>
-          <button type="button" className="icon-button" onClick={() => void loadSessions(true)} title="Refresh sessions">
-            <RefreshCw size={18} className={isRefreshing ? 'spin' : undefined} aria-hidden="true" />
-          </button>
-        </div>
-      </section>
+        }
+      />
 
       <section className="filters" aria-label="Session filters">
         <label className="search-box">
           <Search size={17} aria-hidden="true" />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sessions" />
+        </label>
+
+        <label className="date-box">
+          <Calendar size={17} aria-hidden="true" />
+          <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} title="From date" />
+        </label>
+
+        <label className="date-box">
+          <Calendar size={17} aria-hidden="true" />
+          <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} title="To date" />
         </label>
 
         <label className="select-box">
@@ -387,25 +732,10 @@ export default function App() {
           </select>
         </label>
 
-        <label className="date-box">
-          <Calendar size={17} aria-hidden="true" />
-          <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} title="From date" />
-        </label>
-
-        <label className="date-box">
-          <Calendar size={17} aria-hidden="true" />
-          <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} title="To date" />
-        </label>
-
         <div className="meta-strip" aria-label="Filtered sessions summary">
           <span className="meta-count">
             <strong>{filteredSessions.length}</strong>
             <span>sessions</span>
-          </span>
-          <span className="meta-aic">
-            <Coins size={13} aria-hidden="true" />
-            <strong>{formatAic(filteredAiCredits)} AIC</strong>
-            <span className="meta-kc">({(filteredAiCredits / 4.8).toFixed(0)} Kč)</span>
           </span>
         </div>
       </section>
@@ -462,7 +792,6 @@ export default function App() {
             <>
               <div className="detail-heading">
                 <h2>{selectedSession.firstUserMessage ?? selectedSession.id}</h2>
-                <span>{selectedSession.producer}</span>
               </div>
 
               <dl>
@@ -480,7 +809,7 @@ export default function App() {
                   <h3>AI Credits</h3>
                 </div>
                 <div className="cost-total">
-                  {selectedCost.aiCredits === undefined ? 'Not reported' : <>{formatAic(selectedCost.aiCredits)} AIC <span className="kc-price">({aicToKc(selectedCost.aiCredits)} Kč)</span></>}
+                  {selectedCost.aiCredits === undefined ? 'Not reported' : <>{formatAic(selectedCost.aiCredits)} AIC <span className="kc-price">({aicToKc(selectedCost.aiCredits, rate)} {currency})</span></>}
                 </div>
                 <div className="cost-meta">
                   {(selectedCost.inputTokens || selectedCost.outputTokens || selectedCost.cachedTokens) ? (
@@ -511,11 +840,136 @@ export default function App() {
   );
 }
 
+function AppHeader({
+  page,
+  onNavigate,
+  costSummary
+}: {
+  page: AppPage;
+  onNavigate: (page: AppPage) => void;
+  costSummary?: ReactNode;
+}) {
+  return (
+    <section className="toolbar" aria-label="App header">
+      <div className="header-left">
+        <div className="title-block">
+          <div className="title-row">
+            <h1>
+              <a
+                className="title-home-link"
+                href="/"
+                onClick={(event) => {
+                  event.preventDefault();
+                  onNavigate('sessions');
+                }}
+              >
+                Copilot Debugger
+              </a>
+            </h1>
+          </div>
+        </div>
+
+        <nav className="main-nav" aria-label="Main navigation">
+          <button type="button" className={page === 'sessions' ? 'nav-link nav-link-active' : 'nav-link'} onClick={() => onNavigate('sessions')}>
+            Sessions
+          </button>
+          <button type="button" className={page === 'models' ? 'nav-link nav-link-active' : 'nav-link'} onClick={() => onNavigate('models')}>
+            Models
+          </button>
+          <button type="button" className={page === 'settings' ? 'nav-link nav-link-active' : 'nav-link'} onClick={() => onNavigate('settings')}>
+            Settings
+          </button>
+        </nav>
+      </div>
+
+      {costSummary ? <div className="toolbar-actions">{costSummary}</div> : null}
+    </section>
+  );
+}
+
+function SettingsPage() {
+  const { rate, currency, setRate, setCurrency } = useSettings();
+  const [rateInput, setRateInput] = useState(() => String(rate));
+  const [currencyInput, setCurrencyInput] = useState(currency);
+
+  function commitRate() {
+    const parsed = Number(rateInput.replace(',', '.'));
+    if (Number.isFinite(parsed) && parsed > 0) {
+      setRate(parsed);
+    } else {
+      setRateInput(String(rate));
+    }
+  }
+
+  function commitCurrency() {
+    const trimmed = currencyInput.trim();
+    if (trimmed) {
+      setCurrency(trimmed);
+    } else {
+      setCurrencyInput(currency);
+    }
+  }
+
+  return (
+    <section className="settings-page" aria-label="Settings">
+      <div className="settings-card">
+        <div className="settings-heading">
+          <SettingsIcon size={18} aria-hidden="true" />
+          <h2>Price Conversion Settings</h2>
+        </div>
+        <p className="settings-hint">The rate indicates how many AIC correspond to 1 unit of the selected currency (e.g. AIC / rate = price in currency).</p>
+
+        <label className="settings-field">
+          <span>Currency</span>
+          <input
+            type="text"
+            value={currencyInput}
+            onChange={(event) => setCurrencyInput(event.target.value)}
+            onBlur={commitCurrency}
+          />
+        </label>
+
+        <label className="settings-field">
+          <span>Rate (AIC per 1 {currencyInput || currency})</span>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={rateInput}
+            onChange={(event) => setRateInput(event.target.value)}
+            onBlur={commitRate}
+          />
+        </label>
+
+        <div className="settings-preview-row">
+          <div className="settings-preview">
+            Example: 1 AIC = {(1 / rate).toFixed(4)} {currency}
+            <br />
+            Example: 1 {currency} = {rate.toFixed(4)} AIC
+          </div>
+          <button
+            type="button"
+            className="settings-set-btn"
+            onClick={() => {
+              setCurrency('USD');
+              setCurrencyInput('USD');
+              setRate(100);
+              setRateInput('100');
+            }}
+          >
+            Set USD
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function Footer() {
   return (
     <footer className="app-footer">
-      <a href="https://github.com/mirekholec/vscode-sessions-viewer" target="_blank" rel="noopener noreferrer">
-        github.com/mirekholec/vscode-sessions-viewer
+      <a href="https://github.com/mirekholec/copilot-debugger" target="_blank" rel="noopener noreferrer">
+        GitHub
       </a>
       <span className="app-footer-sep">·</span>
       <a href="https://holec.ai" target="_blank" rel="noopener noreferrer">
@@ -525,9 +979,46 @@ function Footer() {
   );
 }
 
+function ToolCallRow({ tc, nested }: { tc: ToolCallInfo; nested?: boolean }) {
+  const hasSubagent = tc.name === 'runSubagent' && !!tc.subagentTurns && tc.subagentTurns.length > 0;
+
+  return (
+    <div className={hasSubagent ? 'activity-subagent-wrap activity-subagent-open' : 'activity-subagent-wrap'}>
+      <div className={nested ? 'activity-row activity-row-nested' : 'activity-row'}>
+        <span className="activity-label">tool</span>
+        <span className="activity-value">
+          <span className="activity-tool-name">{tc.name}</span>
+          {tc.detail ? <span className="activity-detail">{tc.detail}</span> : null}
+        </span>
+        {hasSubagent && (
+          <span className="activity-subagent-chip">{tc.subagentName ?? 'subagent'} · {tc.subagentTurns!.length} turns</span>
+        )}
+      </div>
+      {hasSubagent && (
+        <div className="activity-subagent-detail">
+          {tc.subagentTurns!.map((st) => (
+            <div key={st.index} className="activity-turn">
+              <div className="activity-row activity-row-nested">
+                <span className="activity-label">turn {st.index + 1}</span>
+                <span className="activity-value">
+                  <span className="activity-tool-name">{st.model ?? '?'}</span>
+                </span>
+              </div>
+              {st.toolCalls.map((stc, i) => (
+                <ToolCallRow key={i} tc={stc} nested />
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TurnCard({ turn }: { turn: TurnInfo }) {
-  const [expanded, setExpanded] = useState(false);
-  const hasActivity = turn.toolCalls.length > 0 || turn.subTurnCount > 0;
+  const { rate, currency } = useSettings();
+  const [showTurns, setShowTurns] = useState(false);
+  const hasActivity = turn.toolCalls.length > 0 || turn.turns.length > 0;
 
   return (
     <div className="turn-card" id={`turn-${turn.index}`}>
@@ -539,39 +1030,42 @@ function TurnCard({ turn }: { turn: TurnInfo }) {
       <div className="turn-body">
         <div className="turn-aic">
           <Coins size={14} aria-hidden="true" />
-          {turn.aiCredits !== undefined ? <strong>{formatAic(turn.aiCredits)} AIC <span className="kc-price">({aicToKc(turn.aiCredits)} Kč)</span></strong> : <span className="no-aic">—</span>}
+          {turn.aiCredits !== undefined ? <strong>{formatAic(turn.aiCredits)} AIC <span className="kc-price">({aicToKc(turn.aiCredits, rate)} {currency})</span></strong> : <span className="no-aic">—</span>}
         </div>
         <div className="turn-chips">
           {turn.inputTokens > 0 ? <span>{formatNumber(turn.inputTokens)} in</span> : null}
           {turn.outputTokens > 0 ? <span>{formatNumber(turn.outputTokens)} out</span> : null}
           {turn.cachedTokens > 0 ? <span>{formatNumber(turn.cachedTokens)} cached</span> : null}
-          {turn.llmRequestCount > 0 ? <span>{turn.llmRequestCount} req</span> : null}
+          {turn.llmRequestCount > 0 ? <span>{turn.llmRequestCount} turns</span> : null}
           {turn.models.map((m) => <span key={m} className="model-chip">{m}</span>)}
-          {turn.hasBrowserContext && <span className="browser-chip" title="Obsahuje Attached Element Context">🌐 browser</span>}
+          {turn.hasBrowserContext && <span className="browser-chip" title="Contains Attached Element Context">🌐 browser</span>}
           {hasActivity && (
-            <button type="button" className="activity-toggle" onClick={() => setExpanded((v) => !v)}>
-              {expanded ? '▲' : '▼'} aktivita
+            <button type="button" className="turns-toggle" onClick={() => setShowTurns((v) => !v)}>
+              {showTurns ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}
+              {showTurns ? 'Hide turns' : 'Show turns'}
             </button>
           )}
         </div>
       </div>
-      {expanded && hasActivity && (
+      {hasActivity && showTurns && (
         <div className="turn-activity">
-          {turn.subTurnCount > 0 && (
-            <div className="activity-row">
-              <span className="activity-label">agent loop</span>
-              <span className="activity-value">{turn.subTurnCount}× LLM round</span>
-            </div>
+          {turn.turns.length > 0 ? (
+            turn.turns.map((t) => (
+              <div key={t.index} className="activity-turn">
+                <div className="activity-row activity-turn-row">
+                  <span className="activity-label">turn {t.index + 1}</span>
+                  <span className="activity-value">
+                    <span className="activity-tool-name">{t.model ?? '?'}</span>
+                  </span>
+                </div>
+                {t.toolCalls.map((tc, i) => (
+                  <ToolCallRow key={i} tc={tc} nested />
+                ))}
+              </div>
+            ))
+          ) : (
+            turn.toolCalls.map((tc, i) => <ToolCallRow key={i} tc={tc} />)
           )}
-          {turn.toolCalls.map((tc, i) => (
-            <div key={i} className="activity-row">
-              <span className="activity-label">tool</span>
-              <span className="activity-value">
-                <span className="activity-tool-name">{tc.name}</span>
-                {tc.detail ? <span className="activity-detail">{tc.detail}</span> : null}
-              </span>
-            </div>
-          ))}
         </div>
       )}
     </div>
@@ -607,7 +1101,7 @@ function ToolTokenAnalysis({ turns }: { turns: TurnInfo[] }) {
       <div className="tool-token-header">
         <div>
           <h3>Tool Usage</h3>
-          <p>Velikost payloadu volání a výsledků nástrojů v debug logu.</p>
+          <p>Size of tool call and result payloads in the debug log.</p>
         </div>
         <div className="tool-token-total">
           {formatChars(totalInput + totalOutput)} total
@@ -927,15 +1421,6 @@ function formatDateTime(value: string) {
   }).format(new Date(value));
 }
 
-function formatShortDateTime(value: string) {
-  const d = new Date(value);
-  const day = d.getDate();
-  const month = d.getMonth() + 1;
-  const hours = String(d.getHours()).padStart(2, '0');
-  const minutes = String(d.getMinutes()).padStart(2, '0');
-  return `${day}.${month}. ${hours}:${minutes}`;
-}
-
 function formatNumber(value: number) {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(value);
 }
@@ -944,6 +1429,6 @@ function formatAic(value: number) {
   return value.toFixed(2);
 }
 
-function aicToKc(value: number) {
-  return (value / 4.8).toFixed(1);
+function aicToKc(value: number, rate: number) {
+  return (value / rate).toFixed(1);
 }

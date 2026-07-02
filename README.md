@@ -1,69 +1,64 @@
-# VS Code Sessions Viewer
+# Copilot Debugger
 
-Lokální viewer pro čtení a procházení VS Code Copilot Chat sessions z lokálních transcript/debug JSONL souborů.
-
-## Ukázka rozhraní
-
-![Seznam sessions](docs/cc1.png)
-
-![Detail session](docs/cc2.png)
-
-## Disclaimer
-
-- Toto je draft aplikace publikovaný jako výchozí bod pro další úpravy.
-- Projekt není oficiální nástroj GitHubu, Microsoftu ani VS Code.
-- Aplikace je určená pro vývojáře, kteří si ji chtějí přizpůsobit vlastním potřebám
-- Aplikace byla postavena a ověřována na macOS. Běh na Windows nebo Linuxu může vyžadovat další úpravy podle konkrétní instalace VS Code a struktury lokálních dat.
-- Formát Copilot Chat logů není stabilní veřejné API, proto se může mezi verzemi VS Code měnit.
+Local developer viewer for VS Code Copilot Chat sessions.
 
 > [!WARNING]
-> Tato aplikace byla vytvořena převážně pomocí generativní umělé inteligence. Kód může obsahovat chyby, bezpečnostní nedostatky nebo neočekávané chování. Používáte ji na vlastní riziko. Před nasazením nebo úpravou pro vlastní potřeby si kód důkladně prostudujte a ověřte.
+> This application was created primarily with generative artificial intelligence. The code may contain bugs, security issues, or unexpected behavior. Use it at your own risk. Before deploying it or adapting it for your own needs, carefully review and verify the code.
 
-## Co projekt dělá
+## Contents
 
-- Skenuje lokální VS Code `workspaceStorage` a hledá Copilot Chat transcripts a debug logy.
-- Čte hlavně soubory `GitHub.copilot-chat/transcripts/*.jsonl` a `GitHub.copilot-chat/debug-logs/*/*.jsonl`.
-- Normalizuje nalezená data do jednoduššího modelu pro UI.
-- Zobrazuje seznam sessions, základní metadata, modely, agenty, nástroje, odhad nákladů a detail turnů.
-- Pracuje pouze s lokálními soubory. Nevolá žádná interní Copilot, Chronicle ani GitHub API.
-- Parsování JSONL je tolerantní: nevalidní nebo neznámé řádky se přeskočí, aby jeden poškozený záznam nerozbil celý scan.
+- [What It Is](#what-it-is)
+- [Installation](#installation)
+- [Troubleshooting](#troubleshooting)
+- [Author](#author)
+- [Contribute](#contribute)
+- [License](#license)
 
-## Architektura
+## What It Is
 
-- Frontend: React + Vite v `src/`.
-- Backend: Node.js + Express v `server/`.
-- Sdílený backend kontrakt je v `server/sources/SessionSource.ts`.
-- Hlavní implementace zdroje dat je `server/sources/VsCodeTranscriptSource.ts`.
-- Backend vystavuje REST API pod `/api/*`.
-- Frontend komunikuje s backendem přes relativní `/api/...` requesty.
-- V dev režimu se frontend a backend spouští současně přes `npm run dev`.
+Copilot Debugger reads local VS Code Copilot Chat transcript and debug JSONL files and shows them in a compact web UI.
 
-Zjednodušený tok dat:
+It scans local VS Code storage, normalizes sessions, and displays session metadata, turns, models, tools, agents, token usage, and estimated AI usage costs.
 
-```text
-VS Code workspaceStorage
-	-> transcript/debug JSONL soubory
-	-> VsCodeTranscriptSource
-	-> Express REST API /api/*
-	-> React UI
+The app does not send your data anywhere. It reads files from your machine and serves the UI locally. It does not call GitHub, Microsoft, Copilot, or any external analytics API.
+
+Default data sources:
+
+- `GitHub.copilot-chat/transcripts/*.jsonl`
+- `GitHub.copilot-chat/debug-logs/*/*.jsonl`
+
+Main stack:
+
+- React + Vite frontend in `src/`
+- Node.js + Express backend in `server/`
+- REST API under `/api/*`
+
+## Installation
+
+Requirements:
+
+- Node.js 20.9 or newer
+- VS Code with local Copilot Chat session logs
+
+Run the published package:
+
+```bash
+npx copilot-debugger
 ```
 
-## Spuštění
-
-Požadavky:
-
-- Node.js 20 nebo novější.
-- Lokální instalace VS Code s existujícími Copilot Chat logy.
+Local development:
 
 ```bash
 npm install
 npm run dev
 ```
 
-- Web běží na `http://127.0.0.1:5173`.
-- API běží na `http://127.0.0.1:4317`.
+Default local URLs:
 
-## Užitečné příkazy
+- Web UI: `http://127.0.0.1:5173`
+- API: `http://127.0.0.1:4317`
+
+Useful commands:
 
 ```bash
 npm run typecheck
@@ -71,39 +66,38 @@ npm run build
 npm run start
 ```
 
-- `npm run typecheck` ověří TypeScript pro frontend i backend.
-- `npm run build` sestaví frontend i backend.
-- `npm run start` spustí sestavený backend z `dist/server/index.js`.
+Optional environment variables:
 
-## Konfigurace
+- `PORT` - backend port
+- `VSCODE_WORKSPACE_STORAGE_ROOT` - custom VS Code `workspaceStorage` root
+- `VSCODE_COPILOT_SESSION_ROOT` - direct root for test/session data
+- `SESSION_POLL_INTERVAL_MS` - fallback refresh interval
 
-- `PORT` mění port backendu.
-- `VSCODE_WORKSPACE_STORAGE_ROOT` mění kořen VS Code `workspaceStorage`.
-- `VSCODE_COPILOT_SESSION_ROOT` nastaví přímý kořen pro testovací data.
-- `SESSION_POLL_INTERVAL_MS` mění interval záložního refreshování.
-
-Výchozí kořen `workspaceStorage` se odvozuje podle platformy:
-
-- macOS: `~/Library/Application Support/Code/User/workspaceStorage`
-- Windows: `%APPDATA%/Code/User/workspaceStorage`
-- Linux: `~/.config/Code/User/workspaceStorage`
-
-Příklad spuštění s vlastní cestou:
+Example:
 
 ```bash
 VSCODE_WORKSPACE_STORAGE_ROOT="/path/to/workspaceStorage" npm run dev
 ```
 
-## Vývoj a úpravy
+## Troubleshooting
 
-- Nové zdroje dat přidávej jako další implementace `SessionSource`.
-- Datové kontrakty měň současně na backendu i ve frontendu.
-- Počítej s tím, že JSONL záznamy mají proměnlivý tvar.
-- Udržuj parsování tolerantní vůči chybějícím nebo neznámým polím.
-- Před dokončením změn spusť `npm run typecheck`.
+- No sessions are shown: check that VS Code has Copilot Chat logs under `workspaceStorage`.
+- Wrong storage location: set `VSCODE_WORKSPACE_STORAGE_ROOT` explicitly.
+- Port is already used: set `PORT`, for example `PORT=4321 npm run dev`.
+- Broken or incomplete data: Copilot Chat log formats are not a stable public API and may change between VS Code versions.
+- TypeScript errors after changes: run `npm run typecheck` before debugging runtime behavior.
 
-## Bezpečnost a soukromí
+## Author
 
-- Aplikace čte lokální soubory z počítače, na kterém běží.
-- Copilot Chat logy mohou obsahovat názvy projektů, fragmenty kódu, prompty nebo jiné citlivé informace.
-- Před sdílením screenshotů, exportů nebo vzorků dat zkontroluj, že neobsahují soukromý obsah.
+- Mirek Holec
+- Microsoft MVP
+- Web: [holec.ai](https://www.holec.ai)
+- GitHub: [mirekholec](https://github.com/mirekholec)
+
+## Contribute
+
+Issues and pull requests are welcome. Keep changes small, focused, and tested with `npm run typecheck`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

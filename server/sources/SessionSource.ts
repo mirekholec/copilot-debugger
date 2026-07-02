@@ -3,6 +3,15 @@ export interface SourceFileInfo {
   debugLog?: string;
 }
 
+export interface ModelCostInfo {
+  model: string;
+  aiCredits?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cachedTokens?: number;
+  requestCount?: number;
+}
+
 export interface SessionCostInfo {
   aiCredits?: number;
   aiCreditUnit?: 'AIC';
@@ -12,6 +21,7 @@ export interface SessionCostInfo {
   cachedTokens?: number;
   requestCount?: number;
   models: string[];
+  perModel: ModelCostInfo[];
 }
 
 export interface NormalizedSession {
@@ -44,6 +54,26 @@ export interface ToolCallInfo {
   detail?: string;
   inputChars: number;
   outputChars: number;
+  // Present when name === 'runSubagent': the nested agent turns executed inside the
+  // subagent's own log file (it can run its own LLM requests and tool calls, often
+  // on a different model than the parent turn).
+  subagentName?: string;
+  subagentTurns?: AgentTurnInfo[];
+}
+
+// One individual agent LLM call inside a round. A single round (one user message,
+// numbered #1, #2... in the UI) can contain several turns, and each turn can use a
+// different model - e.g. when the agent hands off work to a subagent running on a
+// different model.
+export interface AgentTurnInfo {
+  index: number;
+  model?: string;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  aiCredits?: number;
+  timestamp: string;
+  toolCalls: ToolCallInfo[];
 }
 
 export interface TurnInfo {
@@ -57,7 +87,7 @@ export interface TurnInfo {
   aiCredits?: number;
   llmRequestCount: number;
   toolCalls: ToolCallInfo[];
-  subTurnCount: number;
+  turns: AgentTurnInfo[];
   hasBrowserContext: boolean;
 }
 

@@ -6,6 +6,9 @@ const webPort = Number(process.env.VITE_PORT ?? '5173');
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    outDir: 'dist/client'
+  },
   server: {
     port: webPort,
     strictPort: true,

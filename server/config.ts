@@ -21,8 +21,13 @@ function defaultWorkspaceStorageRoot(): string {
 }
 
 export function loadConfig(): ServerConfig {
+  const port = Number(process.env.PORT ?? 4317);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid PORT value: ${process.env.PORT}`);
+  }
+
   return {
-    port: Number(process.env.PORT ?? 4317),
+    port,
     workspaceStorageRoot:
       process.env.VSCODE_WORKSPACE_STORAGE_ROOT ?? defaultWorkspaceStorageRoot(),
     directCopilotSessionRoot: process.env.VSCODE_COPILOT_SESSION_ROOT,

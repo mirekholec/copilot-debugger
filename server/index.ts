@@ -1,7 +1,15 @@
-import cors from 'cors';
+#!/usr/bin/env node
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { loadConfig } from './config.js';
 import { VsCodeTranscriptSource } from './sources/VsCodeTranscriptSource.js';
+
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
+const clientDistRoot = path.resolve(currentDir, '..', 'client');
+const clientIndexPath = path.join(clientDistRoot, 'index.html');
 
 const config = loadConfig();
 const app = express();
@@ -11,8 +19,18 @@ const source = new VsCodeTranscriptSource({
   pollIntervalMs: config.pollIntervalMs
 });
 
-app.use(cors());
-app.use(express.json());
+app.disable('x-powered-by');
+
+// Guard against DNS rebinding: only accept requests addressed to loopback hosts.
+const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
+app.use((request, response, next) => {
+  const host = (request.headers.host ?? '').replace(/:\d+$/, '');
+  if (!ALLOWED_HOSTS.has(host)) {
+    response.status(403).json({ error: 'Forbidden host' });
+    return;
+  }
+  next();
+});
 
 app.get('/api/health', (_request, response) => {
   const snapshot = source.listSessions();
@@ -74,8 +92,19 @@ app.get('/api/sessions/:id/turns', async (request, response) => {
   response.json({ turns, total: turns.length });
 });
 
+if (fs.existsSync(clientIndexPath)) {
+  app.use(express.static(clientDistRoot));
+  app.get('*', (_request, response) => {
+    response.sendFile(clientIndexPath);
+  });
+}
+
 const server = app.listen(config.port, '127.0.0.1', () => {
-  console.log(`Sessions API listening on http://127.0.0.1:${config.port}`);
+  const url = `http://127.0.0.1:${config.port}`;
+  console.log(`Copilot Debugger listening on ${url}`);
+  if (process.env.COPILOT_DEBUGGER_OPEN === '1') {
+    openBrowser(url);
+  }
 });
 
 source.start().catch((error) => {
@@ -89,3 +118,14 @@ async function shutdown(): Promise<void> {
 
 process.on('SIGINT', () => void shutdown());
 process.on('SIGTERM', () => void shutdown());
+
+function openBrowser(url: string): void {
+  const platform = process.platform;
+  const command = platform === 'darwin' ? 'open' : platform === 'win32' ? 'cmd' : 'xdg-open';
+  const args = platform === 'win32' ? ['/c', 'start', '', url] : [url];
+  const child = spawn(command, args, { detached: true, stdio: 'ignore' });
+  child.on('error', (error) => {
+    console.warn(`Could not open browser automatically: ${error.message}`);
+  });
+  child.unref();
+}

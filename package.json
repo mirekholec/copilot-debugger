@@ -1,13 +1,24 @@
 {
-  "name": "vscode-sessions-viewer",
+  "name": "copilot-debugger",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "description": "Copilot Debugger is a local viewer for VS Code Copilot Chat transcript and debug sessions.",
   "type": "module",
+  "author": "Mirek Holec",
+  "bin": {
+    "copilot-debugger": "./dist/server/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "dev": "concurrently -n api,web -c cyan,magenta npm:dev:api npm:dev:web",
     "dev:api": "tsx watch server/index.ts",
     "dev:web": "vite --host 127.0.0.1",
-    "build": "npm run build:client && npm run build:server",
+    "clean": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && npm run build:client && npm run build:server",
     "build:client": "tsc -p tsconfig.app.json --noEmit && vite build",
     "build:server": "tsc -p server/tsconfig.json",
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p server/tsconfig.json --noEmit",
@@ -16,25 +27,39 @@
   "engines": {
     "node": ">=20.9"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mirekholec/copilot-debugger.git"
+  },
+  "homepage": "https://github.com/mirekholec/copilot-debugger#readme",
+  "bugs": {
+    "url": "https://github.com/mirekholec/copilot-debugger/issues"
+  },
+  "license": "MIT",
+  "keywords": [
+    "copilot",
+    "vscode",
+    "debug",
+    "sessions",
+    "viewer"
+  ],
   "dependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
     "chokidar": "^4.0.3",
-    "cors": "^2.8.5",
     "express": "^4.21.2",
-    "fast-glob": "^3.3.3",
-    "lucide-react": "^0.469.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "vite": "^5.4.11"
+    "fast-glob": "^3.3.3"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^20.17.10",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^6.0.3",
     "concurrently": "^9.1.2",
+    "lucide-react": "^0.469.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vite": "^8.1.3"
   }
 }
