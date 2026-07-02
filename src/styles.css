@@ -254,7 +254,7 @@ input::placeholder {
 
 .meta-strip {
   margin-left: auto;
-  gap: 0;
+  gap: 10px;
   min-height: 40px;
   padding: 0 0.8rem;
   background: rgba(255, 255, 255, 0.05);
@@ -278,6 +278,12 @@ input::placeholder {
 
 .meta-count span {
   color: #999999;
+}
+
+.meta-divider {
+  width: 1px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .error-banner {
@@ -966,6 +972,25 @@ code {
   font-variant-numeric: tabular-nums;
 }
 
+.tools-row {
+  grid-template-columns: minmax(210px, 1fr) minmax(90px, 0.45fr) repeat(5, minmax(78px, 0.36fr));
+}
+
+.tools-row--head {
+  background: none;
+  border-color: transparent;
+  color: #777777;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tools-row--unused {
+  background: rgba(227, 160, 126, 0.1);
+  border-color: rgba(227, 160, 126, 0.28);
+}
+
 .models-row--head {
   background: none;
   border-color: transparent;
@@ -1006,6 +1031,31 @@ code {
 
 .models-row-price {
   color: #999999;
+}
+
+.tools-row-server {
+  color: #999999;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tools-row-unused {
+  color: #e3a07e;
+  font-weight: 600;
+}
+
+.tools-deferred-chip {
+  display: inline-flex;
+  margin-left: 7px;
+  padding: 1px 5px;
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  border-radius: 999px;
+  color: #7dd3fc;
+  background: rgba(125, 211, 252, 0.08);
+  font-size: 0.66rem;
+  font-weight: 500;
+  vertical-align: middle;
 }
 
 .state-message svg {
@@ -1089,6 +1139,16 @@ code {
   .session-row {
     grid-template-columns: 1fr;
     gap: 6px;
+  }
+
+  .models-row,
+  .tools-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .models-row span:not(:first-child) {
+    text-align: left;
   }
 
   dl {

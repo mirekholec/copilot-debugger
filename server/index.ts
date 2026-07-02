@@ -55,6 +55,14 @@ app.get('/api/sessions', (request, response) => {
   response.json({ ...snapshot, sessions, total: sessions.length });
 });
 
+app.get('/api/tools', async (request, response) => {
+  const sessionIds = typeof request.query.sessionIds === 'string' && request.query.sessionIds.trim()
+    ? request.query.sessionIds.split(',').map((id) => id.trim()).filter(Boolean)
+    : undefined;
+  const aggregate = await source.getToolsAggregate(sessionIds);
+  response.json(aggregate);
+});
+
 app.get('/api/sessions/:id', (request, response) => {
   const session = source.getSession(request.params.id);
   if (!session) {

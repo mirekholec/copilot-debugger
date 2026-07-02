@@ -5,7 +5,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import chokidar, { type FSWatcher } from 'chokidar';
 import fg from 'fast-glob';
-import type { AgentInfo, AgentTurnInfo, AttachmentInfo, ContextSizes, NormalizedSession, SessionOverview, SessionSource, SessionSourceSnapshot, SkillInfo, ToolCallInfo, ToolInfo, TurnInfo } from './SessionSource.js';
+import type { AgentInfo, AgentTurnInfo, AttachmentInfo, ContextSizes, NormalizedSession, SessionOverview, SessionSource, SessionSourceSnapshot, SkillInfo, ToolAggregateRow, ToolCallInfo, ToolInfo, ToolsAggregate, TurnInfo } from './SessionSource.js';
 
 // debugName values for internal Copilot side-requests that are not part of the actual
 // conversation (e.g. auto-generated chat tab titles). These are excluded from cost/model
@@ -735,6 +735,85 @@ export class VsCodeTranscriptSource implements SessionSource {
     return { skills, agents, attachments, tools, contextSizes };
   }
 
+  async getToolsAggregate(sessionIds?: string[]): Promise<ToolsAggregate> {
+    const wantedIds = sessionIds ? new Set(sessionIds) : undefined;
+    const sessions = [...this.sessions.values()].filter((session) => !wantedIds || wantedIds.has(session.id));
+    const rowsByName = new Map<string, ToolAggregateRow>();
+
+    const ensure = (name: string): ToolAggregateRow => {
+      let row = rowsByName.get(name);
+      if (!row) {
+        const isMcp = name.startsWith('mcp_');
+        row = {
+          name,
+          isMcp,
+          mcpServer: isMcp ? name.split('_').slice(1, -1).join('_') : undefined,
+          deferredCount: 0,
+          connectedSessionCount: 0,
+          usedSessionCount: 0,
+          usedTurnCount: 0,
+          callCount: 0,
+          inputChars: 0,
+          outputChars: 0,
+          sizeBytes: 0
+        };
+        rowsByName.set(name, row);
+      }
+      return row;
+    };
+
+    for (const session of sessions) {
+      const overview = await this.getSessionOverview(session.id);
+      const connected = new Set<string>();
+
+      for (const tool of overview?.tools ?? []) {
+        connected.add(tool.name);
+        const row = ensure(tool.name);
+        row.description ||= tool.description;
+        row.isMcp = row.isMcp || tool.isMcp;
+        row.mcpServer ||= tool.mcpServer;
+        row.sizeBytes += tool.sizeBytes;
+        if (tool.deferred) row.deferredCount += 1;
+      }
+
+      for (const toolName of session.tools) {
+        connected.add(toolName);
+      }
+
+      const turns = await this.getSessionTurns(session.id);
+      const usedInSession = new Set<string>();
+      for (const turn of turns) {
+        const usedInTurn = new Set<string>();
+        collectToolCalls(turn.toolCalls, (tool) => {
+          const row = ensure(tool.name);
+          row.callCount += 1;
+          row.inputChars += tool.inputChars;
+          row.outputChars += tool.outputChars;
+          connected.add(tool.name);
+          usedInSession.add(tool.name);
+          usedInTurn.add(tool.name);
+        });
+        for (const toolName of usedInTurn) {
+          ensure(toolName).usedTurnCount += 1;
+        }
+      }
+
+      for (const toolName of usedInSession) {
+        ensure(toolName).usedSessionCount += 1;
+      }
+
+      for (const toolName of connected) {
+        ensure(toolName).connectedSessionCount += 1;
+      }
+    }
+
+    const rows = [...rowsByName.values()].sort(
+      (a, b) => b.connectedSessionCount - a.connectedSessionCount || b.callCount - a.callCount || a.name.localeCompare(b.name)
+    );
+
+    return { rows, sessionCount: sessions.length };
+  }
+
   private async consumeProviderRequestTools(filePath: string, onTool: (tool: RawToolInfo) => void): Promise<void> {
     await this.readJsonl(filePath, (entry) => {
       if (!entry || typeof entry !== 'object') return;
@@ -1088,6 +1167,15 @@ export class VsCodeTranscriptSource implements SessionSource {
     });
 
     return turns;
+  }
+}
+
+function collectToolCalls(tools: ToolCallInfo[], onTool: (tool: ToolCallInfo) => void): void {
+  for (const tool of tools) {
+    onTool(tool);
+    for (const subTurn of tool.subagentTurns ?? []) {
+      collectToolCalls(subTurn.toolCalls, onTool);
+    }
   }
 }
 

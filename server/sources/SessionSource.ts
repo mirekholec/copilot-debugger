@@ -137,6 +137,26 @@ export interface SessionOverview {
   contextSizes?: ContextSizes;
 }
 
+export interface ToolAggregateRow {
+  name: string;
+  description?: string;
+  isMcp: boolean;
+  mcpServer?: string;
+  deferredCount: number;
+  connectedSessionCount: number;
+  usedSessionCount: number;
+  usedTurnCount: number;
+  callCount: number;
+  inputChars: number;
+  outputChars: number;
+  sizeBytes: number;
+}
+
+export interface ToolsAggregate {
+  rows: ToolAggregateRow[];
+  sessionCount: number;
+}
+
 export interface SessionSource {
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -144,4 +164,5 @@ export interface SessionSource {
   getSession(id: string): NormalizedSession | undefined;
   getSessionTurns(id: string): Promise<TurnInfo[]>;
   getSessionOverview(id: string): Promise<SessionOverview | undefined>;
+  getToolsAggregate(sessionIds?: string[]): Promise<ToolsAggregate>;
 }

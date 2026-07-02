@@ -25,6 +25,26 @@ interface ModelAggregateRow {
   sessionCount: number;
 }
 
+interface ToolAggregateRow {
+  name: string;
+  description?: string;
+  isMcp: boolean;
+  mcpServer?: string;
+  deferredCount: number;
+  connectedSessionCount: number;
+  usedSessionCount: number;
+  usedTurnCount: number;
+  callCount: number;
+  inputChars: number;
+  outputChars: number;
+  sizeBytes: number;
+}
+
+interface ToolsAggregateResponse {
+  rows: ToolAggregateRow[];
+  sessionCount: number;
+}
+
 interface NormalizedSession {
   id: string;
   workspaceStorageId: string;
@@ -148,7 +168,7 @@ type LoadState = 'loading' | 'ready' | 'error';
 
 const SESSION_ROUTE_PREFIX = '/sessions/';
 
-type AppPage = 'sessions' | 'models' | 'settings';
+type AppPage = 'sessions' | 'tools' | 'models' | 'settings';
 
 function toLocalDateInput(date: Date): string {
   const year = date.getFullYear();
@@ -255,6 +275,7 @@ function getRouteSessionId() {
 }
 
 function getRoutePage(): AppPage {
+  if (window.location.pathname.startsWith('/tools')) return 'tools';
   if (window.location.pathname.startsWith('/models')) return 'models';
   if (window.location.pathname.startsWith('/settings')) return 'settings';
   return 'sessions';
@@ -295,6 +316,9 @@ function AppInner() {
   const [dateFrom, setDateFrom] = useState(() => loadStoredFilters().dateFrom);
   const [dateTo, setDateTo] = useState(() => loadStoredFilters().dateTo);
   const [apiConnecting, setApiConnecting] = useState(true);
+  const [toolRows, setToolRows] = useState<ToolAggregateRow[]>([]);
+  const [toolsLoading, setToolsLoading] = useState(false);
+  const [toolsError, setToolsError] = useState<string>();
   const hasConnectedRef = useRef(false);
 
   useEffect(() => {
@@ -370,7 +394,7 @@ function AppInner() {
     setDetailSessionId(undefined);
     setTurns(undefined);
     setOverview(undefined);
-    window.history.pushState(null, '', target === 'models' ? '/models' : target === 'settings' ? '/settings' : '/');
+    window.history.pushState(null, '', target === 'tools' ? '/tools' : target === 'models' ? '/models' : target === 'settings' ? '/settings' : '/');
   }
 
   useEffect(() => {
@@ -379,8 +403,6 @@ function AppInner() {
     if (routeSessionId) {
       openDetail(routeSessionId, false);
     }
-    const interval = window.setInterval(() => void loadSessions(), 5_000);
-    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -504,6 +526,73 @@ function AppInner() {
     [modelRows]
   );
 
+  const toolsPageSessions = useMemo(() => {
+    const fromDate = dateFrom ? new Date(dateFrom + 'T00:00:00') : null;
+    const toDate = dateTo ? new Date(dateTo + 'T23:59:59') : null;
+    return sessions.filter((session) => {
+      const updatedAt = new Date(session.updatedAt);
+      if (fromDate && updatedAt < fromDate) return false;
+      if (toDate && updatedAt > toDate) return false;
+      const sessionWorkspace = session.workspaceName ?? session.workspaceStorageId;
+      return workspaceFilter === 'all' || sessionWorkspace === workspaceFilter;
+    });
+  }, [sessions, dateFrom, dateTo, workspaceFilter]);
+
+  const toolsPageSessionIds = useMemo(() => toolsPageSessions.map((session) => session.id).join(','), [toolsPageSessions]);
+
+  useEffect(() => {
+    if (page !== 'tools' || !hasConnectedRef.current) return;
+    const controller = new AbortController();
+    const loadTools = async () => {
+      setToolsLoading(true);
+      setToolsError(undefined);
+      try {
+        if (!toolsPageSessionIds) {
+          setToolRows([]);
+          return;
+        }
+        const params = new URLSearchParams();
+        params.set('sessionIds', toolsPageSessionIds);
+        const response = await fetch(`/api/tools${params.size ? `?${params}` : ''}`, { signal: controller.signal });
+        if (!response.ok) throw new Error(`API returned ${response.status}`);
+        const payload = (await response.json()) as ToolsAggregateResponse;
+        setToolRows(payload.rows);
+      } catch (caught) {
+        if (controller.signal.aborted) return;
+        setToolsError(caught instanceof Error ? caught.message : String(caught));
+        setToolRows([]);
+      } finally {
+        if (!controller.signal.aborted) setToolsLoading(false);
+      }
+    };
+    void loadTools();
+    return () => controller.abort();
+  }, [page, toolsPageSessionIds]);
+
+  const toolHighlights = useMemo(() => {
+    if (toolRows.length === 0) return undefined;
+    return {
+      mostConnected: [...toolRows].sort((a, b) => b.connectedSessionCount - a.connectedSessionCount || a.name.localeCompare(b.name))[0],
+      mostCalled: [...toolRows].sort((a, b) => b.callCount - a.callCount || a.name.localeCompare(b.name))[0],
+      mostUnused: [...toolRows].sort((a, b) => (b.connectedSessionCount - b.usedSessionCount) - (a.connectedSessionCount - a.usedSessionCount) || a.name.localeCompare(b.name))[0],
+      largestContext: [...toolRows].sort((a, b) => b.sizeBytes - a.sizeBytes || a.name.localeCompare(b.name))[0]
+    };
+  }, [toolRows]);
+
+  const toolTotals = useMemo(
+    () =>
+      toolRows.reduce(
+        (acc, row) => ({
+          callCount: acc.callCount + row.callCount,
+          usedTurnCount: acc.usedTurnCount + row.usedTurnCount,
+          attachedSessionCount: acc.attachedSessionCount + row.connectedSessionCount,
+          usedSessionCount: acc.usedSessionCount + row.usedSessionCount
+        }),
+        { callCount: 0, usedTurnCount: 0, attachedSessionCount: 0, usedSessionCount: 0 }
+      ),
+    [toolRows]
+  );
+
   const selectedSession = filteredSessions.find((session) => session.id === selectedId) ?? filteredSessions[0];
   const selectedCost = selectedSession?.cost ?? { models: [], perModel: [] };
   const detailSession = sessions.find((s) => s.id === detailSessionId);
@@ -566,6 +655,123 @@ function AppInner() {
       <main className="app-shell">
         <AppHeader page={page} onNavigate={navigateToPage} />
         <SettingsPage />
+        <Footer />
+      </main>
+    );
+  }
+
+  if (page === 'tools') {
+    return (
+      <main className="app-shell">
+        <AppHeader page={page} onNavigate={navigateToPage} />
+
+        {toolHighlights ? (
+          <section className="model-highlights" aria-label="Tool usage highlights">
+            <div className="model-highlight-card">
+              <span className="model-highlight-label">Most Connected</span>
+              <strong className="model-highlight-value">{toolHighlights.mostConnected.name}</strong>
+              <span className="model-highlight-meta">{formatNumber(toolHighlights.mostConnected.connectedSessionCount)} sessions</span>
+            </div>
+            <div className="model-highlight-card">
+              <span className="model-highlight-label">Most Called</span>
+              <strong className="model-highlight-value">{toolHighlights.mostCalled.name}</strong>
+              <span className="model-highlight-meta">{formatNumber(toolHighlights.mostCalled.callCount)} calls · {formatNumber(toolHighlights.mostCalled.usedTurnCount)} turns</span>
+            </div>
+            <div className="model-highlight-card">
+              <span className="model-highlight-label">Unused Connections</span>
+              <strong className="model-highlight-value">{toolHighlights.mostUnused.name}</strong>
+              <span className="model-highlight-meta">{formatNumber(Math.max(0, toolHighlights.mostUnused.connectedSessionCount - toolHighlights.mostUnused.usedSessionCount))} sessions</span>
+            </div>
+            <div className="model-highlight-card">
+              <span className="model-highlight-label">Largest Context</span>
+              <strong className="model-highlight-value">{toolHighlights.largestContext.name}</strong>
+              <span className="model-highlight-meta">{formatChars(toolHighlights.largestContext.sizeBytes)}</span>
+            </div>
+          </section>
+        ) : null}
+
+        <section className="filters" aria-label="Tool filters">
+          <label className="date-box">
+            <Calendar size={17} aria-hidden="true" />
+            <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} title="From date" />
+          </label>
+
+          <label className="date-box">
+            <Calendar size={17} aria-hidden="true" />
+            <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} title="To date" />
+          </label>
+
+          <label className="select-box">
+            <Filter size={17} aria-hidden="true" />
+            <select value={workspaceFilter} onChange={(event) => setWorkspaceFilter(event.target.value)}>
+              <option value="all">All workspaces</option>
+              {workspaces.map((ws) => (
+                <option key={ws} value={ws}>
+                  {ws.length > 25 ? ws.slice(0, 25) + '…' : ws}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="meta-strip" aria-label="Filtered tools summary">
+            <span className="meta-count">
+              <strong>{toolRows.length}</strong>
+              <span>tools</span>
+            </span>
+            <span className="meta-divider" />
+            <span className="meta-count">
+              <strong>{toolsPageSessions.length}</strong>
+              <span>sessions</span>
+            </span>
+          </div>
+        </section>
+
+        {error ? <div className="error-banner">{error}</div> : null}
+        {toolsError ? <div className="error-banner">{toolsError}</div> : null}
+
+        <section className="models-table tools-table" role="region" aria-label="Tool usage list">
+          {toolsLoading ? <StateMessage title="Loading tools" detail="Parsing tool contexts and turn usage." /> : null}
+          {!toolsLoading && toolRows.length === 0 ? (
+            <StateMessage title="No tool data found" detail="No sessions with debug tool context match current filters." />
+          ) : null}
+          {!toolsLoading && toolRows.length > 0 ? (
+            <div className="models-table-grid">
+              <div className="models-row tools-row tools-row--head">
+                <span>Tool</span>
+                <span>Server</span>
+                <span>Attached</span>
+                <span>Used</span>
+                <span>% Used</span>
+                <span>Turns</span>
+                <span>Calls</span>
+              </div>
+              {toolRows.map((row) => {
+                const usagePercent = row.connectedSessionCount > 0 ? (row.usedSessionCount / row.connectedSessionCount) * 100 : 0;
+                const isUnused = usagePercent === 0;
+                return (
+                  <div key={row.name} className={isUnused ? 'models-row tools-row tools-row--unused' : 'models-row tools-row'} title={row.description}>
+                    <span className="models-row-name">{row.name}{row.deferredCount > 0 ? <span className="tools-deferred-chip">deferred</span> : null}</span>
+                    <span className="tools-row-server">{row.mcpServer ?? (row.isMcp ? 'unknown' : 'Built-in')}</span>
+                    <span>{formatNumber(row.connectedSessionCount)}</span>
+                    <span>{formatNumber(row.usedSessionCount)}</span>
+                    <span className={isUnused ? 'tools-row-unused' : undefined}>{formatPercent(usagePercent)}</span>
+                    <span>{formatNumber(row.usedTurnCount)}</span>
+                    <span className="models-row-aic">{formatNumber(row.callCount)}</span>
+                  </div>
+                );
+              })}
+              <div className="models-row tools-row models-row--total">
+                <span className="models-row-name">Total</span>
+                <span />
+                <span>{formatNumber(toolTotals.attachedSessionCount)}</span>
+                <span>{formatNumber(toolTotals.usedSessionCount)}</span>
+                <span>{formatPercent(toolTotals.attachedSessionCount > 0 ? (toolTotals.usedSessionCount / toolTotals.attachedSessionCount) * 100 : 0)}</span>
+                <span>{formatNumber(toolTotals.usedTurnCount)}</span>
+                <span>{formatNumber(toolTotals.callCount)}</span>
+              </div>
+            </div>
+          ) : null}
+        </section>
         <Footer />
       </main>
     );
@@ -872,6 +1078,9 @@ function AppHeader({
         <nav className="main-nav" aria-label="Main navigation">
           <button type="button" className={page === 'sessions' ? 'nav-link nav-link-active' : 'nav-link'} onClick={() => onNavigate('sessions')}>
             Sessions
+          </button>
+          <button type="button" className={page === 'tools' ? 'nav-link nav-link-active' : 'nav-link'} onClick={() => onNavigate('tools')}>
+            Tools
           </button>
           <button type="button" className={page === 'models' ? 'nav-link nav-link-active' : 'nav-link'} onClick={() => onNavigate('models')}>
             Models
@@ -1423,6 +1632,10 @@ function formatDateTime(value: string) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(value);
+}
+
+function formatPercent(value: number) {
+  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: value < 10 ? 1 : 0 }).format(value)}%`;
 }
 
 function formatAic(value: number) {
