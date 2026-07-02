@@ -2,9 +2,6 @@
 
 Local developer viewer for VS Code Copilot Chat sessions.
 
-> [!WARNING]
-> This application was created primarily with generative artificial intelligence. The code may contain bugs, security issues, or unexpected behavior. Use it at your own risk. Before deploying it or adapting it for your own needs, carefully review and verify the code.
-
 ## Contents
 
 - [What It Is](#what-it-is)
