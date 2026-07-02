@@ -1178,6 +1178,17 @@ code {
   text-align: right;
 }
 
+.tool-token-bar {
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.tool-token-bar--highlight {
+  background: rgba(227, 160, 126, 0.28);
+  color: #ffffff;
+  font-weight: 600;
+}
+
 .tool-token-name {
   color: #e3a07e;
   font-weight: 500;

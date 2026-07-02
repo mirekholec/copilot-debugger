@@ -693,6 +693,8 @@ function ToolTokenAnalysis({ turns }: { turns: TurnInfo[] }) {
 
   const totalInput = rows.reduce((sum, row) => sum + row.input, 0);
   const totalOutput = rows.reduce((sum, row) => sum + row.output, 0);
+  const HIGHLIGHT_SHARE_THRESHOLD = 0.2;
+  const highlightClass = (value: number, total: number) => (total > 0 && value / total >= HIGHLIGHT_SHARE_THRESHOLD ? 'tool-token-bar tool-token-bar--highlight' : 'tool-token-bar');
 
   return (
     <div className="tool-token-analysis">
@@ -718,8 +720,8 @@ function ToolTokenAnalysis({ turns }: { turns: TurnInfo[] }) {
           <div key={row.name} className="tool-token-row">
             <span className="tool-token-name">{row.name}</span>
             <span>{formatNumber(row.calls)}</span>
-            <span title={`${formatNumber(row.input)} C`}>{formatChars(row.input)}</span>
-            <span title={`${formatNumber(row.output)} C`}>{formatChars(row.output)}</span>
+            <span className={highlightClass(row.input, totalInput)} title={`${formatNumber(row.input)} C`}>{formatChars(row.input)}</span>
+            <span className={highlightClass(row.output, totalOutput)} title={`${formatNumber(row.output)} C`}>{formatChars(row.output)}</span>
             <span title={`${formatNumber(row.input + row.output)} C`}>{formatChars(row.input + row.output)}</span>
           </div>
         ))}
