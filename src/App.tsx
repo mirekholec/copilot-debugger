@@ -75,6 +75,12 @@ interface AgentInfo {
   sizeBytes: number;
 }
 
+interface AttachmentInfo {
+  name: string;
+  description: string;
+  sizeBytes: number;
+}
+
 interface ToolInfo {
   name: string;
   description: string;
@@ -88,6 +94,7 @@ interface ContextSizes {
   systemPromptTotalBytes: number;
   systemPromptSkillsBytes: number;
   systemPromptAgentsBytes: number;
+  systemPromptAttachmentsBytes: number;
   toolsBytes: number;
   userPromptBytes: number;
   maxContextTokens?: number;
@@ -97,6 +104,7 @@ interface ContextSizes {
 interface SessionOverview {
   skills: SkillInfo[];
   agents: AgentInfo[];
+  attachments: AttachmentInfo[];
   tools: ToolInfo[];
   contextSizes?: ContextSizes;
 }
@@ -1026,23 +1034,25 @@ function SessionOverviewPanel({ overview }: { overview: SessionOverview }) {
           </div>
         )}
       </div>
-      {overview.contextSizes && <ContextWindowBar sizes={overview.contextSizes} />}
+      {overview.contextSizes && <ContextWindowBar sizes={overview.contextSizes} attachments={overview.attachments} />}
     </div>
   );
 }
 
-function ContextWindowBar({ sizes }: { sizes: ContextSizes }) {
+function ContextWindowBar({ sizes, attachments }: { sizes: ContextSizes; attachments: AttachmentInfo[] }) {
   const skillsChars = sizes.systemPromptSkillsBytes;
   const agentsChars = sizes.systemPromptAgentsBytes;
-  const otherChars = Math.max(0, sizes.systemPromptTotalBytes - skillsChars - agentsChars);
+  const attachmentsChars = sizes.systemPromptAttachmentsBytes;
+  const otherChars = Math.max(0, sizes.systemPromptTotalBytes - skillsChars - agentsChars - attachmentsChars);
   const toolsChars = sizes.toolsBytes;
   const userChars = sizes.userPromptBytes;
   const totalChars = sizes.systemPromptTotalBytes + toolsChars + userChars;
 
   const segments = [
-    { key: 'other', chars: otherChars, label: 'Instructions', className: 'ctx-seg--other' },
+    { key: 'other', chars: otherChars, label: 'System', className: 'ctx-seg--other' },
     { key: 'skills', chars: skillsChars, label: 'Skills', className: 'ctx-seg--skills' },
     { key: 'agents', chars: agentsChars, label: 'Agents', className: 'ctx-seg--agents' },
+    { key: 'attachments', chars: attachmentsChars, label: 'Instructions', className: 'ctx-seg--attachments' },
     { key: 'tools', chars: toolsChars, label: 'Tools', className: 'ctx-seg--tools' },
     { key: 'user', chars: userChars, label: 'User prompt', className: 'ctx-seg--user' },
   ].filter((s) => s.chars > 0);
@@ -1067,12 +1077,28 @@ function ContextWindowBar({ sizes }: { sizes: ContextSizes }) {
         ))}
       </div>
       <div className="ctx-legend">
-        {segments.map((seg) => (
-          <span key={seg.key} className={`ctx-legend-item ctx-legend-item--${seg.key}`}>
-            <span className="ctx-legend-dot" />
-            {seg.label} <span className="ctx-legend-val">{formatChars(seg.chars)}</span>
-          </span>
-        ))}
+        {segments.map((seg) =>
+          seg.key === 'attachments' ? (
+            <span key={seg.key} className="ctx-legend-item ctx-legend-item--attachments ctx-legend-item--popover">
+              <span className="ctx-legend-dot" />
+              <span className="ctx-legend-hint">{seg.label}</span> <span className="ctx-legend-val">{formatChars(seg.chars)}</span>
+              <div className="ctx-popover">
+                <div className="ctx-popover-title">{seg.label} ({attachments.length})</div>
+                {attachments.map((a, i) => (
+                  <div key={i} className="ctx-popover-row">
+                    <span className="ctx-popover-name">{a.name}</span>
+                    <span className="ctx-popover-size">{formatChars(a.sizeBytes)}</span>
+                  </div>
+                ))}
+              </div>
+            </span>
+          ) : (
+            <span key={seg.key} className={`ctx-legend-item ctx-legend-item--${seg.key}`}>
+              <span className="ctx-legend-dot" />
+              {seg.label} <span className="ctx-legend-val">{formatChars(seg.chars)}</span>
+            </span>
+          )
+        )}
       </div>
     </div>
   );

@@ -1566,6 +1566,7 @@ code {
 .ctx-seg--other   { background: rgba(167, 243, 208, 0.65); }
 .ctx-seg--skills  { background: rgba(227, 160, 126, 0.85); }
 .ctx-seg--agents  { background: rgba(147, 197, 253, 0.75); }
+.ctx-seg--attachments { background: rgba(244, 114, 182, 0.70); }
 .ctx-seg--tools   { background: rgba(196, 181, 253, 0.70); }
 .ctx-seg--user    { background: rgba(253, 224, 71,  0.70); }
 .ctx-seg--empty   { background: transparent; }
@@ -1596,8 +1597,74 @@ code {
 .ctx-legend-item--other  .ctx-legend-dot { background: rgba(167, 243, 208, 0.8); }
 .ctx-legend-item--skills .ctx-legend-dot { background: rgba(227, 160, 126, 1);   }
 .ctx-legend-item--agents .ctx-legend-dot { background: rgba(147, 197, 253, 0.9); }
+.ctx-legend-item--attachments .ctx-legend-dot { background: rgba(244, 114, 182, 0.9); }
 .ctx-legend-item--tools  .ctx-legend-dot { background: rgba(196, 181, 253, 0.9); }
 .ctx-legend-item--user   .ctx-legend-dot { background: rgba(253, 224, 71,  0.9); }
+
+.ctx-legend-item--popover {
+  position: relative;
+  cursor: default;
+}
+
+.ctx-legend-hint {
+  text-decoration: underline dotted rgba(255, 255, 255, 0.45);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
+.ctx-popover {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  min-width: 220px;
+  max-width: 340px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #1a1a1e;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.ctx-legend-item--popover:hover .ctx-popover {
+  display: block;
+}
+
+.ctx-popover-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #ffffff;
+  margin-bottom: 6px;
+}
+
+.ctx-popover-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 0.72rem;
+  color: #cccccc;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.ctx-popover-row:first-of-type {
+  border-top: none;
+}
+
+.ctx-popover-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctx-popover-size {
+  flex-shrink: 0;
+  color: #999999;
+}
 
 .ctx-legend-val {
   color: #cccccc;

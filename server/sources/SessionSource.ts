@@ -73,6 +73,12 @@ export interface AgentInfo {
   sizeBytes: number;
 }
 
+export interface AttachmentInfo {
+  name: string;
+  description: string;
+  sizeBytes: number;
+}
+
 export interface ToolInfo {
   name: string;
   description: string;
@@ -86,6 +92,7 @@ export interface ContextSizes {
   systemPromptTotalBytes: number;
   systemPromptSkillsBytes: number;
   systemPromptAgentsBytes: number;
+  systemPromptAttachmentsBytes: number;
   toolsBytes: number;
   userPromptBytes: number;
   maxContextTokens?: number;
@@ -95,6 +102,7 @@ export interface ContextSizes {
 export interface SessionOverview {
   skills: SkillInfo[];
   agents: AgentInfo[];
+  attachments: AttachmentInfo[];
   tools: ToolInfo[];
   contextSizes?: ContextSizes;
 }

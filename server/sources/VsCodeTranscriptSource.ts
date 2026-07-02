@@ -5,7 +5,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import chokidar, { type FSWatcher } from 'chokidar';
 import fg from 'fast-glob';
-import type { AgentInfo, ContextSizes, NormalizedSession, SessionOverview, SessionSource, SessionSourceSnapshot, SkillInfo, ToolCallInfo, ToolInfo, TurnInfo } from './SessionSource.js';
+import type { AgentInfo, AttachmentInfo, ContextSizes, NormalizedSession, SessionOverview, SessionSource, SessionSourceSnapshot, SkillInfo, ToolCallInfo, ToolInfo, TurnInfo } from './SessionSource.js';
 
 interface VsCodeTranscriptSourceOptions {
   workspaceStorageRoot: string;
@@ -555,6 +555,7 @@ export class VsCodeTranscriptSource implements SessionSource {
 
     const skills: SkillInfo[] = [];
     const agents: AgentInfo[] = [];
+    const attachments: AttachmentInfo[] = [];
     const toolsByName = new Map<string, ToolInfo>();
     const addTool = (tool: RawToolInfo) => {
       const name = getToolName(tool);
@@ -578,6 +579,7 @@ export class VsCodeTranscriptSource implements SessionSource {
     let systemPromptTotalBytes = 0;
     let systemPromptSkillsBytes = 0;
     let systemPromptAgentsBytes = 0;
+    let systemPromptAttachmentsBytes = 0;
 
     if (systemPromptFile) {
       try {
@@ -607,6 +609,19 @@ export class VsCodeTranscriptSource implements SessionSource {
           for (const m of agentEntries) {
             agents.push({ name: m[1].trim(), description: m[2].trim(), sizeBytes: m[0].length });
           }
+        }
+
+        // Parse standalone <attachment> blocks
+        const attachmentEntries = text.matchAll(/<attachment([^>]*)>([\s\S]*?)<\/attachment>/g);
+        for (const m of attachmentEntries) {
+          const attrs = m[1];
+          const idMatch = attrs.match(/\bid="([^"]*)"/);
+          const filePathMatch = attrs.match(/\bfilePath="([^"]*)"/);
+          const name = idMatch?.[1] ?? (filePathMatch ? filePathMatch[1].split('/').pop() ?? filePathMatch[1] : 'attachment');
+          const description = m[2].trim().slice(0, 160).replace(/\s+/g, ' ');
+          const sizeBytes = m[0].length;
+          systemPromptAttachmentsBytes += sizeBytes;
+          attachments.push({ name, description, sizeBytes });
         }
       } catch {
         // ignore parse errors
@@ -661,6 +676,7 @@ export class VsCodeTranscriptSource implements SessionSource {
       systemPromptTotalBytes,
       systemPromptSkillsBytes,
       systemPromptAgentsBytes,
+      systemPromptAttachmentsBytes,
       toolsBytes: toolsBytesTotal,
       userPromptBytes,
       maxContextTokens,
@@ -669,9 +685,10 @@ export class VsCodeTranscriptSource implements SessionSource {
 
     skills.sort((a, b) => b.sizeBytes - a.sizeBytes || a.name.localeCompare(b.name));
     agents.sort((a, b) => b.sizeBytes - a.sizeBytes || a.name.localeCompare(b.name));
+    attachments.sort((a, b) => b.sizeBytes - a.sizeBytes || a.name.localeCompare(b.name));
     tools.sort((a, b) => b.sizeBytes - a.sizeBytes || a.name.localeCompare(b.name));
 
-    return { skills, agents, tools, contextSizes };
+    return { skills, agents, attachments, tools, contextSizes };
   }
 
   private async consumeProviderRequestTools(filePath: string, onTool: (tool: RawToolInfo) => void): Promise<void> {
