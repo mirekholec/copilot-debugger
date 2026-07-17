@@ -1,6 +1,6 @@
 {
   "name": "copilot-debugger",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "private": false,
   "description": "Copilot Debugger is a local viewer for VS Code Copilot Chat transcript and debug sessions.",
   "type": "module",

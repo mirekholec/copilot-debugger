@@ -1,16 +1,42 @@
 # Copilot Debugger
 
-Local developer viewer for VS Code Copilot Chat sessions.
+**See exactly how many tokens — and how much money — each VS Code Copilot Chat session burns. 100% local, zero telemetry.**
+
+Copilot Debugger reads your local Copilot Chat logs and shows session metadata, turns, models, tools, agents, token usage, and estimated AI costs in a compact web UI. Nothing leaves your machine.
+
+<!-- TODO: hero GIF here — 10-15s loop showing: launch `npx copilot-debugger` → session list → open a session → token/cost breakdown. asciinema or GIF, ~800px wide. -->
+<!-- ![Copilot Debugger demo](docs/demo.gif) -->
+
+[![npm version](https://img.shields.io/npm/v/copilot-debugger.svg)](https://www.npmjs.com/package/copilot-debugger)
+[![npm downloads](https://img.shields.io/npm/dw/copilot-debugger.svg)](https://www.npmjs.com/package/copilot-debugger)
+[![node](https://img.shields.io/node/v/copilot-debugger.svg)](https://www.npmjs.com/package/copilot-debugger)
+[![license](https://img.shields.io/npm/l/copilot-debugger.svg)](LICENSE)
+
+```bash
+npx copilot-debugger
+```
 
 ## Contents
 
+- [Why](#why)
 - [What It Is](#what-it-is)
 - [Installation](#installation)
 - [Troubleshooting](#troubleshooting)
 - [Screenshots](#screenshots)
+- [Architecture](#architecture)
 - [Author](#author)
 - [Contribute](#contribute)
 - [License](#license)
+
+## Why
+
+Copilot Chat is a black box. You don't see what's actually happening inside a session until it's slow, expensive, or both. Copilot Debugger opens that box:
+
+- **A session feels slow or bloated** — see which turns, tools, and agents ate the context window.
+- **You're moving to usage-based billing (AI Credits)** — check real token usage and estimated cost *before* it hits your invoice.
+- **You want to understand model behavior** — inspect which models ran, what tools they called, and how much each turn cost.
+
+Everything runs on your machine. No account, no cloud, no data leaving your laptop.
 
 ## What It Is
 
@@ -18,18 +44,12 @@ Copilot Debugger reads local VS Code Copilot Chat transcript and debug JSONL fil
 
 It scans local VS Code storage, normalizes sessions, and displays session metadata, turns, models, tools, agents, token usage, and estimated AI usage costs.
 
-The app does not send your data anywhere. It reads files from your machine and serves the UI locally. It does not call GitHub, Microsoft, Copilot, or any external analytics API.
+**Privacy:** The app does not send your data anywhere. It reads files from your machine and serves the UI locally. It does not call GitHub, Microsoft, Copilot, or any external analytics API.
 
 Default data sources:
 
 - `GitHub.copilot-chat/transcripts/*.jsonl`
 - `GitHub.copilot-chat/debug-logs/*/*.jsonl`
-
-Main stack:
-
-- React + Vite frontend in `src/`
-- Node.js + Express backend in `server/`
-- REST API under `/api/*`
 
 ## Installation
 
@@ -87,16 +107,21 @@ VSCODE_WORKSPACE_STORAGE_ROOT="/path/to/workspaceStorage" npm run dev
 
 ## Screenshots
 
-<table>
-	<tr>
-		<td width="280"><a href="docs/cd1.png"><img src="docs/cd1.png" alt="Copilot Debugger session list" width="280" height="160"></a></td>
-		<td width="280"><a href="docs/cd2.png"><img src="docs/cd2.png" alt="Copilot Debugger session detail" width="280" height="160"></a></td>
-	</tr>
-	<tr>
-		<td width="280"><a href="docs/cd3.png"><img src="docs/cd3.png" alt="Copilot Debugger debug log detail" width="280" height="160"></a></td>
-		<td width="280" height="160">Application previews are shown here.</td>
-	</tr>
-</table>
+<!-- TODO: consider replacing static shots with a short GIF per view, or at least bump these to full-width. Drop the placeholder cell below. -->
+
+| Session list | Session detail |
+| :---: | :---: |
+| [![Session list](docs/cd1.png)](docs/cd1.png) | [![Session detail](docs/cd2.png)](docs/cd2.png) |
+| **Model usage** | |
+| [![Model usage](docs/cd3.png)](docs/cd3.png) | |
+
+## Architecture
+
+Main stack:
+
+- React + Vite frontend in `src/`
+- Node.js + Express backend in `server/`
+- REST API under `/api/*`
 
 ## Author
 

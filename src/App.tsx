@@ -403,6 +403,8 @@ function AppInner() {
     if (routeSessionId) {
       openDetail(routeSessionId, false);
     }
+    const interval = window.setInterval(() => void loadSessions(), 5_000);
+    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -567,7 +569,7 @@ function AppInner() {
     };
     void loadTools();
     return () => controller.abort();
-  }, [page, toolsPageSessionIds]);
+  }, [page, dateFrom, dateTo, workspaceFilter, apiConnecting]);
 
   const toolHighlights = useMemo(() => {
     if (toolRows.length === 0) return undefined;
