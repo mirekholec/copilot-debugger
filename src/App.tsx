@@ -196,7 +196,7 @@ interface StoredFilters {
 
 function loadStoredFilters(): StoredFilters {
   try {
-    const raw = window.localStorage.getItem(FILTERS_STORAGE_KEY);
+    const raw = window.sessionStorage.getItem(FILTERS_STORAGE_KEY);
     if (!raw) return { dateFrom: defaultDateFrom(), dateTo: defaultDateTo(), workspaceFilter: 'all' };
     const parsed = JSON.parse(raw) as Partial<StoredFilters>;
     return {
@@ -323,7 +323,7 @@ function AppInner() {
 
   useEffect(() => {
     const filters: StoredFilters = { dateFrom, dateTo, workspaceFilter };
-    window.localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(filters));
+    window.sessionStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(filters));
   }, [dateFrom, dateTo, workspaceFilter]);
 
   async function loadSessions() {
