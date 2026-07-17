@@ -1179,6 +1179,14 @@ function SettingsPage() {
 function Footer() {
   return (
     <footer className="app-footer">
+      <a
+        href="https://github.com/mirekholec/copilot-debugger/blob/main/CHANGELOG.md"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        v{__APP_VERSION__} · Changelog
+      </a>
+      <span className="app-footer-sep">·</span>
       <a href="https://github.com/mirekholec/copilot-debugger" target="_blank" rel="noopener noreferrer">
         GitHub
       </a>

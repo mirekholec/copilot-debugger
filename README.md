@@ -21,6 +21,7 @@ npx copilot-debugger
 - [Why](#why)
 - [What It Is](#what-it-is)
 - [Installation](#installation)
+- [Changelog](#changelog)
 - [Troubleshooting](#troubleshooting)
 - [Screenshots](#screenshots)
 - [Architecture](#architecture)
@@ -96,6 +97,10 @@ Example:
 ```bash
 VSCODE_WORKSPACE_STORAGE_ROOT="/path/to/workspaceStorage" npm run dev
 ```
+
+## Changelog
+
+Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 
 ## Troubleshooting
 
