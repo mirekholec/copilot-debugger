@@ -1,0 +1,16 @@
+{"id":"e1","timestamp":"2026-01-01T10:00:00.000Z","type":"session.start","data":{"version":2,"sessionId":"fixture-session","producer":"copilot-agent","copilotVersion":"1.0.0","startTime":"2026-01-01T10:00:00.000Z","selectedModel":"fixture-model","context":{"cwd":"/fixture/workspace","repository":"owner/repository","branch":"feature/test","clientName":"vscode-agent-host"}}}
+{"id":"e2","parentId":"e1","timestamp":"2026-01-01T10:00:01.000Z","type":"system.message","data":{"content":"<tools>\n<read_file>\nRead a file from disk.\n</read_file>\n<example>\nNot a tool.\n</example>\n</tools><available_skills><skill><name>fixture-skill</name><description>Fixture skill</description></skill><skill><name>unused-skill</name><description>Unused fixture skill</description></skill></available_skills><agents><agent><name>fixture-agent</name><description>Fixture agent</description></agent></agents>"}}
+{"id":"e3","parentId":"e2","timestamp":"2026-01-01T10:00:02.000Z","type":"user.message","data":{"interactionId":"interaction-1","content":"Inspect the fixture","attachments":[{"name":"browser-context.json","mimeType":"application/json","byteLength":42}]}}
+{"id":"e4","parentId":"e3","timestamp":"2026-01-01T10:00:03.000Z","type":"assistant.turn_start","data":{"interactionId":"interaction-1","turnId":"0"}}
+{"id":"e4b","parentId":"e4","timestamp":"2026-01-01T10:00:03.500Z","type":"user.message","data":{"interactionId":"interaction-1","content":"Inspect the fixture"}}
+{"id":"e5","parentId":"e4","timestamp":"2026-01-01T10:00:04.000Z","type":"assistant.message","data":{"interactionId":"interaction-1","turnId":"0","model":"fixture-model","content":"Done","outputTokens":12}}
+{"id":"e6","parentId":"e5","timestamp":"2026-01-01T10:00:05.000Z","type":"tool.execution_start","data":{"turnId":"0","toolCallId":"tool-1","toolName":"read_file","arguments":{"filePath":"/fixture/workspace/file.ts"}}}
+{"id":"e7","parentId":"e6","timestamp":"2026-01-01T10:00:06.000Z","type":"external_tool.requested","data":{"turnId":"0","requestId":"request-1","toolCallId":"tool-1","toolName":"read_file","arguments":{"filePath":"/fixture/workspace/file.ts"}}}
+{"id":"e8","parentId":"e7","timestamp":"2026-01-01T10:00:07.000Z","type":"subagent.started","data":{"turnId":"0","toolCallId":"tool-1","agentName":"fixture-agent","agentDescription":"Fixture agent","model":"fixture-sub-model"}}
+{"id":"e9","parentId":"e8","timestamp":"2026-01-01T10:00:08.000Z","type":"tool.execution_complete","data":{"turnId":"0","toolCallId":"tool-1","success":true,"result":"fixture result"}}
+{"id":"e10","parentId":"e9","timestamp":"2026-01-01T10:00:09.000Z","type":"skill.invoked","data":{"name":"fixture-skill","description":"Fixture skill","content":"fixture content"}}
+{"id":"e11","parentId":"e10","timestamp":"2026-01-01T10:00:10.000Z","type":"session.compaction_start","data":{"systemTokens":100,"conversationTokens":200,"toolDefinitionsTokens":50}}
+{"id":"e12","parentId":"e11","timestamp":"2026-01-01T10:00:11.000Z","type":"session.binary_asset","data":{"assetId":"asset-1","mimeType":"image/png","byteLength":12,"data":"ZmFrZS1iaW5hcnk="}}
+{"id":"e13","parentId":"e12","timestamp":"2026-01-01T10:00:12.000Z","type":"future.unknown_event","data":{"value":true}}
+not-json
+{"id":"incomplete"

@@ -1,8 +1,8 @@
 # Copilot Debugger
 
-**See exactly how many tokens — and how much money — each VS Code Copilot Chat session burns. 100% local, zero telemetry.**
+**See exactly what each Copilot Agent Host session loads, uses, and costs. 100% local, zero telemetry.**
 
-Copilot Debugger reads your local Copilot Chat logs and shows session metadata, turns, models, tools, agents, token usage, and estimated AI costs in a compact web UI. Nothing leaves your machine.
+Copilot Debugger reads local Copilot Agent Host data and shows session context, turns, models, tools, agents, skills, token usage, and estimated AI costs in a compact web UI. Nothing leaves your machine.
 
 <!-- TODO: hero GIF here — 10-15s loop showing: launch `npx copilot-debugger` → session list → open a session → token/cost breakdown. asciinema or GIF, ~800px wide. -->
 <!-- ![Copilot Debugger demo](docs/demo.gif) -->
@@ -41,23 +41,30 @@ Everything runs on your machine. No account, no cloud, no data leaving your lapt
 
 ## What It Is
 
-Copilot Debugger reads local VS Code Copilot Chat transcript and debug JSONL files and shows them in a compact web UI.
+Copilot Debugger reads the shared Copilot Agent Host session store and shows it in a compact web UI.
 
-It scans local VS Code storage, normalizes sessions, and displays session metadata, turns, models, tools, agents, token usage, and estimated AI usage costs.
+It scans Agent Host storage, normalizes sessions, and displays the context inventory separately from runtime tool usage.
 
 **Privacy:** The app does not send your data anywhere. It reads files from your machine and serves the UI locally. It does not call GitHub, Microsoft, Copilot, or any external analytics API.
 
 Default data sources:
 
-- `GitHub.copilot-chat/transcripts/*.jsonl`
-- `GitHub.copilot-chat/debug-logs/*/*.jsonl`
+- `~/.copilot/session-store.db`
+- `~/.copilot/session-state/*/events.jsonl`
+- `~/.copilot/session-state/*.jsonl`
+- `~/.copilot/session-state/*/workspace.yaml`
+
+- VS Code `agentHostCustomizations/<session-id>.json` snapshots for session-scoped agents and skills
+- Agent Host `logs/process-*.log` for MCP servers initialized when the session starts
+
+The Agent Host database is opened read-only with WAL support. Session lists use the compact database and YAML metadata; large event streams are parsed only when a detail is opened. Unknown or malformed events are skipped without hiding the rest of the session.
 
 ## Installation
 
 Requirements:
 
 - Node.js 20.9 or newer
-- VS Code with local Copilot Chat session logs
+- Copilot Agent Host with local session data
 
 Run the published package:
 
@@ -81,6 +88,7 @@ Useful commands:
 
 ```bash
 npm run typecheck
+npm test
 npm run build
 npm run start
 ```
@@ -88,14 +96,14 @@ npm run start
 Optional environment variables:
 
 - `PORT` - backend port
-- `VSCODE_WORKSPACE_STORAGE_ROOT` - custom VS Code `workspaceStorage` root
-- `VSCODE_COPILOT_SESSION_ROOT` - direct root for test/session data
+- `COPILOT_DEBUGGER_AGENT_ROOT` - custom Copilot Agent Host root (default `~/.copilot`)
+- `COPILOT_DEBUGGER_CUSTOMIZATIONS_ROOT` - custom VS Code Agent Host customization snapshot root
 - `SESSION_POLL_INTERVAL_MS` - fallback refresh interval
 
 Example:
 
 ```bash
-VSCODE_WORKSPACE_STORAGE_ROOT="/path/to/workspaceStorage" npm run dev
+COPILOT_DEBUGGER_AGENT_ROOT="/path/to/.copilot" npm run dev
 ```
 
 ## Changelog
@@ -104,8 +112,9 @@ Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 
 ## Troubleshooting
 
-- No sessions are shown: check that VS Code has Copilot Chat logs under `workspaceStorage`.
-- Wrong storage location: set `VSCODE_WORKSPACE_STORAGE_ROOT` explicitly.
+- No sessions are shown: check `~/.copilot/session-state`.
+- Wrong Agent Host location: set `COPILOT_DEBUGGER_AGENT_ROOT` explicitly.
+- Session shows incomplete data: the event stream or `session-store.db` may be absent, locked, or from a newer internal schema. Available data remains visible and the UI shows a warning.
 - Port is already used: set `PORT`, for example `PORT=4321 npm run dev`.
 - Broken or incomplete data: Copilot Chat log formats are not a stable public API and may change between VS Code versions.
 - TypeScript errors after changes: run `npm run typecheck` before debugging runtime behavior.
@@ -127,6 +136,10 @@ Main stack:
 - React + Vite frontend in `src/`
 - Node.js + Express backend in `server/`
 - REST API under `/api/*`
+- `CopilotAgentHostSource` reads only the current Agent Host storage model
+- Usage comes from read-only SQLite; detailed turns and context tokens come from lazy JSONL parsing
+- Session-scoped agents and skills come from VS Code Agent Host customization snapshots
+- Initialized MCP servers come from the matching Agent Host process lifecycle log
 
 ## Author
 

@@ -3,20 +3,22 @@ import path from 'node:path';
 
 export interface ServerConfig {
   port: number;
-  workspaceStorageRoot: string;
-  directCopilotSessionRoot?: string;
+  agentHostRoot: string;
+  customizationsRoot?: string;
   pollIntervalMs: number;
 }
 
-function defaultWorkspaceStorageRoot(): string {
+function defaultCustomizationsRoot(): string | undefined {
   const home = os.homedir();
   switch (os.platform()) {
     case 'win32':
-      return path.join(process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming'), 'Code', 'User', 'workspaceStorage');
+      return path.join(process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming'), 'Code', 'User', 'agentHostCustomizations');
     case 'linux':
-      return path.join(home, '.config', 'Code', 'User', 'workspaceStorage');
-    default: // darwin
-      return path.join(home, 'Library', 'Application Support', 'Code', 'User', 'workspaceStorage');
+      return path.join(home, '.config', 'Code', 'User', 'agentHostCustomizations');
+    case 'darwin':
+      return path.join(home, 'Library', 'Application Support', 'Code', 'User', 'agentHostCustomizations');
+    default:
+      return undefined;
   }
 }
 
@@ -28,9 +30,8 @@ export function loadConfig(): ServerConfig {
 
   return {
     port,
-    workspaceStorageRoot:
-      process.env.VSCODE_WORKSPACE_STORAGE_ROOT ?? defaultWorkspaceStorageRoot(),
-    directCopilotSessionRoot: process.env.VSCODE_COPILOT_SESSION_ROOT,
+    agentHostRoot: process.env.COPILOT_DEBUGGER_AGENT_ROOT ?? path.join(os.homedir(), '.copilot'),
+    customizationsRoot: process.env.COPILOT_DEBUGGER_CUSTOMIZATIONS_ROOT ?? defaultCustomizationsRoot(),
     pollIntervalMs: Number(process.env.SESSION_POLL_INTERVAL_MS ?? 30_000)
   };
 }

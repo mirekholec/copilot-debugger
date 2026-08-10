@@ -1,8 +1,8 @@
 {
   "name": "copilot-debugger",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "private": false,
-  "description": "Copilot Debugger is a local viewer for VS Code Copilot Chat transcript and debug sessions.",
+  "description": "Copilot Debugger is a local viewer for Copilot Agent Host sessions, context, tools, agents, skills, tokens, and costs.",
   "type": "module",
   "author": "Mirek Holec",
   "bin": {
@@ -22,6 +22,7 @@
     "build": "npm run clean && npm run build:client && npm run build:server",
     "build:client": "tsc -p tsconfig.app.json --noEmit && vite build",
     "build:server": "tsc -p server/tsconfig.json",
+    "test": "tsx --test server/sources/*.test.ts",
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p server/tsconfig.json --noEmit",
     "start": "node dist/server/index.js"
   },
@@ -45,11 +46,14 @@
     "viewer"
   ],
   "dependencies": {
+    "better-sqlite3": "^12.6.2",
     "chokidar": "^4.0.3",
     "express": "^4.21.2",
-    "fast-glob": "^3.3.3"
+    "fast-glob": "^3.3.3",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/express": "^4.17.21",
     "@types/node": "^20.17.10",
     "@types/react": "^18.3.18",

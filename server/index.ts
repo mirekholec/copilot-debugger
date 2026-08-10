@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { loadConfig } from './config.js';
-import { VsCodeTranscriptSource } from './sources/VsCodeTranscriptSource.js';
+import { CopilotAgentHostSource } from './sources/CopilotAgentHostSource.js';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const clientDistRoot = path.resolve(currentDir, '..', 'client');
@@ -13,9 +13,9 @@ const clientIndexPath = path.join(clientDistRoot, 'index.html');
 
 const config = loadConfig();
 const app = express();
-const source = new VsCodeTranscriptSource({
-  workspaceStorageRoot: config.workspaceStorageRoot,
-  directCopilotSessionRoot: config.directCopilotSessionRoot,
+const source = new CopilotAgentHostSource({
+  agentHostRoot: config.agentHostRoot,
+  customizationsRoot: config.customizationsRoot,
   pollIntervalMs: config.pollIntervalMs
 });
 
@@ -44,7 +44,7 @@ app.get('/api/sessions', (request, response) => {
 
   const sessions = snapshot.sessions.filter((session) => {
     const matchesQuery = q
-      ? [session.id, session.workspaceStorageId, session.firstUserMessage, session.producer]
+      ? [session.id, session.workspaceStorageId, session.firstUserMessage, session.producer, session.clientName, session.repository]
           .filter(Boolean)
           .some((value) => value?.toLowerCase().includes(q))
       : true;
@@ -53,14 +53,6 @@ app.get('/api/sessions', (request, response) => {
   });
 
   response.json({ ...snapshot, sessions, total: sessions.length });
-});
-
-app.get('/api/tools', async (request, response) => {
-  const sessionIds = typeof request.query.sessionIds === 'string' && request.query.sessionIds.trim()
-    ? request.query.sessionIds.split(',').map((id) => id.trim()).filter(Boolean)
-    : undefined;
-  const aggregate = await source.getToolsAggregate(sessionIds);
-  response.json(aggregate);
 });
 
 app.get('/api/sessions/:id', (request, response) => {

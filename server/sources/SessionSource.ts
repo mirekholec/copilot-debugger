@@ -1,6 +1,19 @@
 export interface SourceFileInfo {
   transcript?: string;
   debugLog?: string;
+  events?: string;
+  workspaceMetadata?: string;
+  sessionStore?: string;
+  customizations?: string;
+}
+
+export type SessionSourceKind = 'copilot-agent-host';
+
+export interface SessionDataCompleteness {
+  hasEvents: boolean;
+  hasWorkspaceMetadata: boolean;
+  hasUsageData: boolean;
+  warnings: string[];
 }
 
 export interface ModelCostInfo {
@@ -27,8 +40,16 @@ export interface SessionCostInfo {
 export interface NormalizedSession {
   id: string;
   workspaceStorageId: string;
+  workspaceKey?: string;
   workspaceName?: string;
   sourcePaths: SourceFileInfo;
+  sourceKind: SessionSourceKind;
+  clientName?: string;
+  repository?: string;
+  branch?: string;
+  hostType?: string;
+  schemaVersion?: number;
+  dataCompleteness?: SessionDataCompleteness;
   startTime?: string;
   updatedAt: string;
   producer: string;
@@ -40,6 +61,7 @@ export interface NormalizedSession {
   agents: string[];
   tools: string[];
   hasDebugLog: boolean;
+  hasDetailedEvents: boolean;
   cost: SessionCostInfo;
 }
 
@@ -94,19 +116,27 @@ export interface TurnInfo {
 export interface SkillInfo {
   name: string;
   description: string;
-  sizeBytes: number;
+  sizeBytes?: number;
+  sizeChars?: number;
 }
 
 export interface AgentInfo {
   name: string;
   description: string;
-  sizeBytes: number;
+  sizeBytes?: number;
+  sizeChars?: number;
 }
 
 export interface AttachmentInfo {
   name: string;
   description: string;
   sizeBytes: number;
+}
+
+export interface InstructionInfo {
+  name: string;
+  path?: string;
+  sizeChars: number;
 }
 
 export interface ToolInfo {
@@ -118,43 +148,51 @@ export interface ToolInfo {
   sizeBytes: number;
 }
 
+export interface McpServerInfo {
+  name: string;
+  title?: string;
+  instructionBytes: number;
+  instructions?: string;
+  documentedTools: string[];
+}
+
+export type ContextSectionKey = 'system' | 'instructions' | 'agents' | 'skills' | 'tools' | 'mcp' | 'conversation' | 'other';
+
 export interface ContextSizes {
   systemPromptTotalBytes: number;
   systemPromptSkillsBytes: number;
   systemPromptAgentsBytes: number;
   systemPromptAttachmentsBytes: number;
-  toolsBytes: number;
+  toolsBytes?: number;
   userPromptBytes: number;
+  systemPromptChars: number;
+  userInstructionsChars: number;
+  agentDefinitionsChars: number;
+  skillDefinitionsChars: number;
+  toolDefinitionsChars: number;
+  mcpDefinitionsChars: number;
+  conversationChars: number;
+  otherChars: number;
   maxContextTokens?: number;
   model?: string;
+  systemTokens?: number;
+  conversationTokens?: number;
+  toolDefinitionsTokens?: number;
 }
 
 export interface SessionOverview {
   skills: SkillInfo[];
+  skillsAvailability?: 'catalog' | 'unavailable';
   agents: AgentInfo[];
+  agentsAvailability?: 'catalog' | 'unavailable';
+  userInstructions: InstructionInfo[];
   attachments: AttachmentInfo[];
   tools: ToolInfo[];
+  toolsAvailability?: 'definitions' | 'unavailable';
+  mcpServers?: McpServerInfo[];
+  mcpServersAvailability?: 'initialized' | 'unavailable';
   contextSizes?: ContextSizes;
-}
-
-export interface ToolAggregateRow {
-  name: string;
-  description?: string;
-  isMcp: boolean;
-  mcpServer?: string;
-  deferredCount: number;
-  connectedSessionCount: number;
-  usedSessionCount: number;
-  usedTurnCount: number;
-  callCount: number;
-  inputChars: number;
-  outputChars: number;
-  sizeBytes: number;
-}
-
-export interface ToolsAggregate {
-  rows: ToolAggregateRow[];
-  sessionCount: number;
+  contextContent?: Partial<Record<ContextSectionKey, string>>;
 }
 
 export interface SessionSource {
@@ -164,5 +202,4 @@ export interface SessionSource {
   getSession(id: string): NormalizedSession | undefined;
   getSessionTurns(id: string): Promise<TurnInfo[]>;
   getSessionOverview(id: string): Promise<SessionOverview | undefined>;
-  getToolsAggregate(sessionIds?: string[]): Promise<ToolsAggregate>;
 }

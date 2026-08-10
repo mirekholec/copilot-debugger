@@ -1,9 +1,13 @@
-import { Bug, Calendar, ChevronDown, ChevronRight, Clock3, Coins, ExternalLink, Filter, RefreshCw, Search, Settings as SettingsIcon } from 'lucide-react';
+import { Calendar, ChevronDown, ChevronRight, Clock3, Coins, ExternalLink, Filter, PanelsTopLeft, RefreshCw, Search, Settings as SettingsIcon, Terminal, X } from 'lucide-react';
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 interface SourceFileInfo {
   transcript?: string;
   debugLog?: string;
+  events?: string;
+  workspaceMetadata?: string;
+  sessionStore?: string;
+  customizations?: string;
 }
 
 interface ModelCostInfo {
@@ -25,31 +29,21 @@ interface ModelAggregateRow {
   sessionCount: number;
 }
 
-interface ToolAggregateRow {
-  name: string;
-  description?: string;
-  isMcp: boolean;
-  mcpServer?: string;
-  deferredCount: number;
-  connectedSessionCount: number;
-  usedSessionCount: number;
-  usedTurnCount: number;
-  callCount: number;
-  inputChars: number;
-  outputChars: number;
-  sizeBytes: number;
-}
-
-interface ToolsAggregateResponse {
-  rows: ToolAggregateRow[];
-  sessionCount: number;
-}
-
 interface NormalizedSession {
   id: string;
   workspaceStorageId: string;
   workspaceName?: string;
   sourcePaths: SourceFileInfo;
+  sourceKind: 'copilot-agent-host';
+  clientName?: string;
+  repository?: string;
+  branch?: string;
+  dataCompleteness?: {
+    hasEvents: boolean;
+    hasWorkspaceMetadata: boolean;
+    hasUsageData: boolean;
+    warnings: string[];
+  };
   startTime?: string;
   updatedAt: string;
   producer: string;
@@ -61,6 +55,7 @@ interface NormalizedSession {
   agents: string[];
   tools: string[];
   hasDebugLog: boolean;
+  hasDetailedEvents: boolean;
   cost: {
     aiCredits?: number;
     aiCreditUnit?: 'AIC';
@@ -121,19 +116,27 @@ interface SessionsResponse {
 interface SkillInfo {
   name: string;
   description: string;
-  sizeBytes: number;
+  sizeBytes?: number;
+  sizeChars?: number;
 }
 
 interface AgentInfo {
   name: string;
   description: string;
-  sizeBytes: number;
+  sizeBytes?: number;
+  sizeChars?: number;
 }
 
 interface AttachmentInfo {
   name: string;
   description: string;
   sizeBytes: number;
+}
+
+interface InstructionInfo {
+  name: string;
+  path?: string;
+  sizeChars: number;
 }
 
 interface ToolInfo {
@@ -145,30 +148,58 @@ interface ToolInfo {
   sizeBytes: number;
 }
 
+interface McpServerInfo {
+  name: string;
+  title?: string;
+  instructionBytes: number;
+  instructions?: string;
+  documentedTools: string[];
+}
+
+type ContextSectionKey = 'system' | 'instructions' | 'agents' | 'skills' | 'tools' | 'mcp' | 'conversation' | 'other';
+
 interface ContextSizes {
   systemPromptTotalBytes: number;
   systemPromptSkillsBytes: number;
   systemPromptAgentsBytes: number;
   systemPromptAttachmentsBytes: number;
-  toolsBytes: number;
+  toolsBytes?: number;
   userPromptBytes: number;
+  systemPromptChars: number;
+  userInstructionsChars: number;
+  agentDefinitionsChars: number;
+  skillDefinitionsChars: number;
+  toolDefinitionsChars: number;
+  mcpDefinitionsChars: number;
+  conversationChars: number;
+  otherChars: number;
   maxContextTokens?: number;
   model?: string;
+  systemTokens?: number;
+  conversationTokens?: number;
+  toolDefinitionsTokens?: number;
 }
 
 interface SessionOverview {
   skills: SkillInfo[];
+  skillsAvailability?: 'catalog' | 'unavailable';
   agents: AgentInfo[];
+  agentsAvailability?: 'catalog' | 'unavailable';
+  userInstructions: InstructionInfo[];
   attachments: AttachmentInfo[];
   tools: ToolInfo[];
+  toolsAvailability?: 'definitions' | 'unavailable';
+  mcpServers?: McpServerInfo[];
+  mcpServersAvailability?: 'initialized' | 'unavailable';
   contextSizes?: ContextSizes;
+  contextContent?: Partial<Record<ContextSectionKey, string>>;
 }
 
 type LoadState = 'loading' | 'ready' | 'error';
 
 const SESSION_ROUTE_PREFIX = '/sessions/';
 
-type AppPage = 'sessions' | 'tools' | 'models' | 'settings';
+type AppPage = 'sessions' | 'models' | 'settings';
 
 function toLocalDateInput(date: Date): string {
   const year = date.getFullYear();
@@ -275,7 +306,6 @@ function getRouteSessionId() {
 }
 
 function getRoutePage(): AppPage {
-  if (window.location.pathname.startsWith('/tools')) return 'tools';
   if (window.location.pathname.startsWith('/models')) return 'models';
   if (window.location.pathname.startsWith('/settings')) return 'settings';
   return 'sessions';
@@ -290,6 +320,14 @@ function formatChars(value: number) {
     maximumFractionDigits: value < 100 ? 2 : value < 10_000 ? 1 : 0
   }).format(value / 1000);
   return `${formatted} kC`;
+}
+
+function formatInstructionPath(value: string) {
+  if (value.length <= 40) return value;
+  const separatorIndex = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
+  const fileNameLength = value.length - separatorIndex - 1;
+  const suffixLength = Math.max(42, fileNameLength);
+  return `...${value.slice(-suffixLength)}`;
 }
 
 export default function App() {
@@ -316,9 +354,6 @@ function AppInner() {
   const [dateFrom, setDateFrom] = useState(() => loadStoredFilters().dateFrom);
   const [dateTo, setDateTo] = useState(() => loadStoredFilters().dateTo);
   const [apiConnecting, setApiConnecting] = useState(true);
-  const [toolRows, setToolRows] = useState<ToolAggregateRow[]>([]);
-  const [toolsLoading, setToolsLoading] = useState(false);
-  const [toolsError, setToolsError] = useState<string>();
   const hasConnectedRef = useRef(false);
 
   useEffect(() => {
@@ -394,7 +429,7 @@ function AppInner() {
     setDetailSessionId(undefined);
     setTurns(undefined);
     setOverview(undefined);
-    window.history.pushState(null, '', target === 'tools' ? '/tools' : target === 'models' ? '/models' : target === 'settings' ? '/settings' : '/');
+    window.history.pushState(null, '', target === 'models' ? '/models' : target === 'settings' ? '/settings' : '/');
   }
 
   useEffect(() => {
@@ -453,7 +488,7 @@ function AppInner() {
       if (fromDate && updatedAt < fromDate) return false;
       if (toDate && updatedAt > toDate) return false;
       const matchesQuery = normalizedQuery
-        ? [session.id, session.workspaceStorageId, session.workspaceName, session.firstUserMessage, session.producer]
+        ? [session.id, session.workspaceStorageId, session.workspaceName, session.firstUserMessage, session.producer, session.clientName, session.repository]
             .filter(Boolean)
             .some((value) => value?.toLowerCase().includes(normalizedQuery))
         : true;
@@ -528,73 +563,6 @@ function AppInner() {
     [modelRows]
   );
 
-  const toolsPageSessions = useMemo(() => {
-    const fromDate = dateFrom ? new Date(dateFrom + 'T00:00:00') : null;
-    const toDate = dateTo ? new Date(dateTo + 'T23:59:59') : null;
-    return sessions.filter((session) => {
-      const updatedAt = new Date(session.updatedAt);
-      if (fromDate && updatedAt < fromDate) return false;
-      if (toDate && updatedAt > toDate) return false;
-      const sessionWorkspace = session.workspaceName ?? session.workspaceStorageId;
-      return workspaceFilter === 'all' || sessionWorkspace === workspaceFilter;
-    });
-  }, [sessions, dateFrom, dateTo, workspaceFilter]);
-
-  const toolsPageSessionIds = useMemo(() => toolsPageSessions.map((session) => session.id).join(','), [toolsPageSessions]);
-
-  useEffect(() => {
-    if (page !== 'tools' || !hasConnectedRef.current) return;
-    const controller = new AbortController();
-    const loadTools = async () => {
-      setToolsLoading(true);
-      setToolsError(undefined);
-      try {
-        if (!toolsPageSessionIds) {
-          setToolRows([]);
-          return;
-        }
-        const params = new URLSearchParams();
-        params.set('sessionIds', toolsPageSessionIds);
-        const response = await fetch(`/api/tools${params.size ? `?${params}` : ''}`, { signal: controller.signal });
-        if (!response.ok) throw new Error(`API returned ${response.status}`);
-        const payload = (await response.json()) as ToolsAggregateResponse;
-        setToolRows(payload.rows);
-      } catch (caught) {
-        if (controller.signal.aborted) return;
-        setToolsError(caught instanceof Error ? caught.message : String(caught));
-        setToolRows([]);
-      } finally {
-        if (!controller.signal.aborted) setToolsLoading(false);
-      }
-    };
-    void loadTools();
-    return () => controller.abort();
-  }, [page, dateFrom, dateTo, workspaceFilter, apiConnecting]);
-
-  const toolHighlights = useMemo(() => {
-    if (toolRows.length === 0) return undefined;
-    return {
-      mostConnected: [...toolRows].sort((a, b) => b.connectedSessionCount - a.connectedSessionCount || a.name.localeCompare(b.name))[0],
-      mostCalled: [...toolRows].sort((a, b) => b.callCount - a.callCount || a.name.localeCompare(b.name))[0],
-      mostUnused: [...toolRows].sort((a, b) => (b.connectedSessionCount - b.usedSessionCount) - (a.connectedSessionCount - a.usedSessionCount) || a.name.localeCompare(b.name))[0],
-      largestContext: [...toolRows].sort((a, b) => b.sizeBytes - a.sizeBytes || a.name.localeCompare(b.name))[0]
-    };
-  }, [toolRows]);
-
-  const toolTotals = useMemo(
-    () =>
-      toolRows.reduce(
-        (acc, row) => ({
-          callCount: acc.callCount + row.callCount,
-          usedTurnCount: acc.usedTurnCount + row.usedTurnCount,
-          attachedSessionCount: acc.attachedSessionCount + row.connectedSessionCount,
-          usedSessionCount: acc.usedSessionCount + row.usedSessionCount
-        }),
-        { callCount: 0, usedTurnCount: 0, attachedSessionCount: 0, usedSessionCount: 0 }
-      ),
-    [toolRows]
-  );
-
   const selectedSession = filteredSessions.find((session) => session.id === selectedId) ?? filteredSessions[0];
   const selectedCost = selectedSession?.cost ?? { models: [], perModel: [] };
   const detailSession = sessions.find((s) => s.id === detailSessionId);
@@ -657,123 +625,6 @@ function AppInner() {
       <main className="app-shell">
         <AppHeader page={page} onNavigate={navigateToPage} />
         <SettingsPage />
-        <Footer />
-      </main>
-    );
-  }
-
-  if (page === 'tools') {
-    return (
-      <main className="app-shell">
-        <AppHeader page={page} onNavigate={navigateToPage} />
-
-        {toolHighlights ? (
-          <section className="model-highlights" aria-label="Tool usage highlights">
-            <div className="model-highlight-card">
-              <span className="model-highlight-label">Most Connected</span>
-              <strong className="model-highlight-value">{toolHighlights.mostConnected.name}</strong>
-              <span className="model-highlight-meta">{formatNumber(toolHighlights.mostConnected.connectedSessionCount)} sessions</span>
-            </div>
-            <div className="model-highlight-card">
-              <span className="model-highlight-label">Most Called</span>
-              <strong className="model-highlight-value">{toolHighlights.mostCalled.name}</strong>
-              <span className="model-highlight-meta">{formatNumber(toolHighlights.mostCalled.callCount)} calls · {formatNumber(toolHighlights.mostCalled.usedTurnCount)} turns</span>
-            </div>
-            <div className="model-highlight-card">
-              <span className="model-highlight-label">Unused Connections</span>
-              <strong className="model-highlight-value">{toolHighlights.mostUnused.name}</strong>
-              <span className="model-highlight-meta">{formatNumber(Math.max(0, toolHighlights.mostUnused.connectedSessionCount - toolHighlights.mostUnused.usedSessionCount))} sessions</span>
-            </div>
-            <div className="model-highlight-card">
-              <span className="model-highlight-label">Largest Context</span>
-              <strong className="model-highlight-value">{toolHighlights.largestContext.name}</strong>
-              <span className="model-highlight-meta">{formatChars(toolHighlights.largestContext.sizeBytes)}</span>
-            </div>
-          </section>
-        ) : null}
-
-        <section className="filters" aria-label="Tool filters">
-          <label className="date-box">
-            <Calendar size={17} aria-hidden="true" />
-            <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} title="From date" />
-          </label>
-
-          <label className="date-box">
-            <Calendar size={17} aria-hidden="true" />
-            <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} title="To date" />
-          </label>
-
-          <label className="select-box">
-            <Filter size={17} aria-hidden="true" />
-            <select value={workspaceFilter} onChange={(event) => setWorkspaceFilter(event.target.value)}>
-              <option value="all">All workspaces</option>
-              {workspaces.map((ws) => (
-                <option key={ws} value={ws}>
-                  {ws.length > 25 ? ws.slice(0, 25) + '…' : ws}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <div className="meta-strip" aria-label="Filtered tools summary">
-            <span className="meta-count">
-              <strong>{toolRows.length}</strong>
-              <span>tools</span>
-            </span>
-            <span className="meta-divider" />
-            <span className="meta-count">
-              <strong>{toolsPageSessions.length}</strong>
-              <span>sessions</span>
-            </span>
-          </div>
-        </section>
-
-        {error ? <div className="error-banner">{error}</div> : null}
-        {toolsError ? <div className="error-banner">{toolsError}</div> : null}
-
-        <section className="models-table tools-table" role="region" aria-label="Tool usage list">
-          {toolsLoading ? <StateMessage title="Loading tools" detail="Parsing tool contexts and turn usage." /> : null}
-          {!toolsLoading && toolRows.length === 0 ? (
-            <StateMessage title="No tool data found" detail="No sessions with debug tool context match current filters." />
-          ) : null}
-          {!toolsLoading && toolRows.length > 0 ? (
-            <div className="models-table-grid">
-              <div className="models-row tools-row tools-row--head">
-                <span>Tool</span>
-                <span>Server</span>
-                <span>Attached</span>
-                <span>Used</span>
-                <span>% Used</span>
-                <span>Turns</span>
-                <span>Calls</span>
-              </div>
-              {toolRows.map((row) => {
-                const usagePercent = row.connectedSessionCount > 0 ? (row.usedSessionCount / row.connectedSessionCount) * 100 : 0;
-                const isUnused = usagePercent === 0;
-                return (
-                  <div key={row.name} className={isUnused ? 'models-row tools-row tools-row--unused' : 'models-row tools-row'} title={row.description}>
-                    <span className="models-row-name">{row.name}{row.deferredCount > 0 ? <span className="tools-deferred-chip">deferred</span> : null}</span>
-                    <span className="tools-row-server">{row.mcpServer ?? (row.isMcp ? 'unknown' : 'Built-in')}</span>
-                    <span>{formatNumber(row.connectedSessionCount)}</span>
-                    <span>{formatNumber(row.usedSessionCount)}</span>
-                    <span className={isUnused ? 'tools-row-unused' : undefined}>{formatPercent(usagePercent)}</span>
-                    <span>{formatNumber(row.usedTurnCount)}</span>
-                    <span className="models-row-aic">{formatNumber(row.callCount)}</span>
-                  </div>
-                );
-              })}
-              <div className="models-row tools-row models-row--total">
-                <span className="models-row-name">Total</span>
-                <span />
-                <span>{formatNumber(toolTotals.attachedSessionCount)}</span>
-                <span>{formatNumber(toolTotals.usedSessionCount)}</span>
-                <span>{formatPercent(toolTotals.attachedSessionCount > 0 ? (toolTotals.usedSessionCount / toolTotals.attachedSessionCount) * 100 : 0)}</span>
-                <span>{formatNumber(toolTotals.usedTurnCount)}</span>
-                <span>{formatNumber(toolTotals.callCount)}</span>
-              </div>
-            </div>
-          ) : null}
-        </section>
         <Footer />
       </main>
     );
@@ -958,15 +809,24 @@ function AppInner() {
           ) : null}
 
           {filteredSessions.map((session) => (
-            <button
+            <div
               key={session.id}
-              type="button"
+              role="button"
+              tabIndex={0}
               className={`session-row ${selectedSession?.id === session.id ? 'selected' : ''} ${(session.cost.aiCredits ?? 0) <= 1 ? 'dim' : ''}`}
               onClick={() => setSelectedId(session.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  setSelectedId(session.id);
+                }
+              }}
             >
               <span className="summary-cell">
-                <strong>{truncate(session.firstUserMessage ?? 'Untitled session', 60)}</strong>
-                <small>{session.workspaceName ?? session.workspaceStorageId}</small>
+                <span className="summary-text">
+                  <strong>{truncate(session.firstUserMessage ?? 'Untitled session', 60)}</strong>
+                  <small>{session.workspaceName ?? session.workspaceStorageId}</small>
+                </span>
               </span>
               <span>{formatDateTime(session.updatedAt)}</span>
               <span className="stats-cell">
@@ -978,20 +838,10 @@ function AppInner() {
                   ? <><Coins size={13} aria-hidden="true" />{formatAic(session.cost.aiCredits)}</>
                   : '—'}
               </span>
-              <span className="badge-cell">
-                {session.hasDebugLog ? (
-                  <button
-                    type="button"
-                    className="debug-badge-btn"
-                    onClick={(e) => { e.stopPropagation(); void openDetail(session.id); }}
-                    title="Open debug detail"
-                  >
-                    <Bug size={15} aria-hidden="true" />
-                    Debug
-                  </button>
-                ) : 'Transcript'}
+              <span className="source-cell">
+                <SessionSourceIcon session={session} onOpenDetail={() => void openDetail(session.id)} />
               </span>
-            </button>
+            </div>
           ))}
         </div>
 
@@ -1009,7 +859,17 @@ function AppInner() {
                 <dd>{selectedSession.startTime ? formatDateTime(selectedSession.startTime) : 'Unknown'}</dd>
                 <dt>Messages</dt>
                 <dd>{selectedSession.messageCount}</dd>
+                <dt>Source</dt>
+                <dd>Copilot Agent Host</dd>
+                <dt>Client</dt>
+                <dd>{selectedSession.clientName ?? 'Unknown'}</dd>
+                {selectedSession.repository ? <><dt>Repository</dt><dd>{selectedSession.repository}</dd></> : null}
+                {selectedSession.branch ? <><dt>Branch</dt><dd>{selectedSession.branch}</dd></> : null}
               </dl>
+
+              {selectedSession.dataCompleteness?.warnings.length ? (
+                <div className="completeness-warning">{selectedSession.dataCompleteness.warnings.join(' · ')}</div>
+              ) : null}
 
               <section className="cost-panel" aria-label="AI credit usage">
                 <div className="cost-heading">
@@ -1036,6 +896,10 @@ function AppInner() {
               <div className="path-stack">
                 {selectedSession.sourcePaths.transcript ? <PathLine label="Transcript" value={selectedSession.sourcePaths.transcript} /> : null}
                 {selectedSession.sourcePaths.debugLog ? <PathLine label="Debug log" value={selectedSession.sourcePaths.debugLog} /> : null}
+                {selectedSession.sourcePaths.events ? <PathLine label="Events" value={selectedSession.sourcePaths.events} /> : null}
+                {selectedSession.sourcePaths.workspaceMetadata ? <PathLine label="Workspace" value={selectedSession.sourcePaths.workspaceMetadata} /> : null}
+                {selectedSession.sourcePaths.sessionStore ? <PathLine label="Session store" value={selectedSession.sourcePaths.sessionStore} /> : null}
+                {selectedSession.sourcePaths.customizations ? <PathLine label="Customizations" value={selectedSession.sourcePaths.customizations} /> : null}
               </div>
             </>
           ) : (
@@ -1045,6 +909,31 @@ function AppInner() {
       </section>
       <Footer />
     </main>
+  );
+}
+
+function SessionSourceIcon({ session, onOpenDetail }: { session: NormalizedSession; onOpenDetail: () => void }) {
+  const isCli = session.clientName === 'github/cli';
+  const label = `Agent Host · ${session.clientName ?? 'unknown client'}`;
+  const icon = isCli ? <Terminal size={17} aria-hidden="true" /> : <PanelsTopLeft size={17} aria-hidden="true" />;
+
+  if (!session.hasDetailedEvents) {
+    return <span className="source-icon" title={label} aria-label={label} role="img">{icon}</span>;
+  }
+
+  return (
+    <button
+      type="button"
+      className="source-icon source-icon--button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpenDetail();
+      }}
+      title={label}
+      aria-label={`Open ${label} session detail`}
+    >
+      {icon}
+    </button>
   );
 }
 
@@ -1080,9 +969,6 @@ function AppHeader({
         <nav className="main-nav" aria-label="Main navigation">
           <button type="button" className={page === 'sessions' ? 'nav-link nav-link-active' : 'nav-link'} onClick={() => onNavigate('sessions')}>
             Sessions
-          </button>
-          <button type="button" className={page === 'tools' ? 'nav-link nav-link-active' : 'nav-link'} onClick={() => onNavigate('tools')}>
-            Tools
           </button>
           <button type="button" className={page === 'models' ? 'nav-link nav-link-active' : 'nav-link'} onClick={() => onNavigate('models')}>
             Models
@@ -1404,7 +1290,9 @@ function SessionOverviewPanel({ overview }: { overview: SessionOverview }) {
               {visibleSkills.map((skill) => (
                 <div key={skill.name} className="overview-mcp-server" title={skill.description}>
                   <span className="mcp-server-name">{skill.name}</span>
-                  <span className="mcp-tool-count">{formatChars(skill.sizeBytes)}</span>
+                  {skill.sizeChars !== undefined || skill.sizeBytes !== undefined
+                    ? <span className="mcp-tool-count">{formatChars(skill.sizeChars ?? skill.sizeBytes ?? 0)}</span>
+                    : null}
                 </div>
               ))}
               {!skillsExpanded && hiddenSkillsCount > 0 && (
@@ -1421,6 +1309,20 @@ function SessionOverviewPanel({ overview }: { overview: SessionOverview }) {
           </div>
         )}
 
+        {overview.skillsAvailability === 'unavailable' && (
+          <div className="overview-section overview-section--groups">
+            <h3 className="overview-section-title">Skills</h3>
+            <p className="overview-availability">The skills catalog is not persisted for this session.</p>
+          </div>
+        )}
+
+        {overview.agentsAvailability === 'unavailable' && (
+          <div className="overview-section overview-section--groups">
+            <h3 className="overview-section-title">Agents</h3>
+            <p className="overview-availability">The agent catalog attached to the LLM context is not persisted for this session.</p>
+          </div>
+        )}
+
         {overview.agents.length > 0 && (
           <div className="overview-section overview-section--groups">
             <h3 className="overview-section-title">Agents ({overview.agents.length})</h3>
@@ -1428,7 +1330,9 @@ function SessionOverviewPanel({ overview }: { overview: SessionOverview }) {
               {visibleAgents.map((agent) => (
                 <div key={agent.name} className="overview-mcp-server" title={agent.description}>
                   <span className="mcp-server-name">{agent.name}</span>
-                  <span className="mcp-tool-count">{formatChars(agent.sizeBytes)}</span>
+                  {agent.sizeChars !== undefined || agent.sizeBytes !== undefined
+                    ? <span className="mcp-tool-count">{formatChars(agent.sizeChars ?? agent.sizeBytes ?? 0)}</span>
+                    : null}
                 </div>
               ))}
               {!agentsExpanded && hiddenAgentsCount > 0 && (
@@ -1442,6 +1346,13 @@ function SessionOverviewPanel({ overview }: { overview: SessionOverview }) {
                 </button>
               )}
             </div>
+          </div>
+        )}
+
+        {overview.toolsAvailability === 'unavailable' && (
+          <div className="overview-section overview-section--groups">
+            <h3 className="overview-section-title">Tools</h3>
+            <p className="overview-availability">Tool definitions and the MCP server catalog attached to the LLM request are not persisted for this session.</p>
           </div>
         )}
 
@@ -1548,53 +1459,104 @@ function SessionOverviewPanel({ overview }: { overview: SessionOverview }) {
             </div>
           </div>
         )}
+
+        {(overview.mcpServers?.length ?? 0) > 0 && (
+          <div className="overview-section overview-section--groups">
+            <h3 className="overview-section-title">MCP servers ({overview.mcpServers!.length})</h3>
+            <div className="overview-tools-group">
+              {overview.mcpServers!.map((server) => (
+                <div
+                  key={server.name}
+                  className="overview-mcp-server"
+                  title={server.documentedTools.length ? `Documented tools: ${server.documentedTools.join(', ')}` : server.name}
+                >
+                  <span className="mcp-server-name">{server.title ?? server.name}</span>
+                  <span className="mcp-tool-count">
+                    {server.documentedTools.length ? `${server.documentedTools.length} documented tools` : formatChars(server.instructionBytes)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {overview.mcpServersAvailability === 'unavailable' && (
+          <div className="overview-section overview-section--groups">
+            <h3 className="overview-section-title">MCP servers</h3>
+            <p className="overview-availability">No session-scoped MCP initialization data was persisted.</p>
+          </div>
+        )}
       </div>
-      {overview.contextSizes && <ContextWindowBar sizes={overview.contextSizes} attachments={overview.attachments} />}
+      {overview.contextSizes && <ContextWindowBar sizes={overview.contextSizes} content={overview.contextContent} instructions={overview.userInstructions} attachments={overview.attachments} />}
     </div>
   );
 }
 
-function ContextWindowBar({ sizes, attachments }: { sizes: ContextSizes; attachments: AttachmentInfo[] }) {
-  const skillsChars = sizes.systemPromptSkillsBytes;
-  const agentsChars = sizes.systemPromptAgentsBytes;
-  const attachmentsChars = sizes.systemPromptAttachmentsBytes;
-  const otherChars = Math.max(0, sizes.systemPromptTotalBytes - skillsChars - agentsChars - attachmentsChars);
-  const toolsChars = sizes.toolsBytes;
-  const userChars = sizes.userPromptBytes;
-  const totalChars = sizes.systemPromptTotalBytes + toolsChars + userChars;
-
+function ContextWindowBar({ sizes, content, instructions, attachments }: { sizes: ContextSizes; content?: Partial<Record<ContextSectionKey, string>>; instructions: InstructionInfo[]; attachments: AttachmentInfo[] }) {
+  const [selectedSegment, setSelectedSegment] = useState<{ key: ContextSectionKey; label: string }>();
   const segments = [
-    { key: 'other', chars: otherChars, label: 'System', className: 'ctx-seg--other' },
-    { key: 'skills', chars: skillsChars, label: 'Skills', className: 'ctx-seg--skills' },
-    { key: 'agents', chars: agentsChars, label: 'Agents', className: 'ctx-seg--agents' },
-    { key: 'attachments', chars: attachmentsChars, label: 'Instructions', className: 'ctx-seg--attachments' },
-    { key: 'tools', chars: toolsChars, label: 'Tools', className: 'ctx-seg--tools' },
-    { key: 'user', chars: userChars, label: 'User prompt', className: 'ctx-seg--user' },
-  ].filter((s) => s.chars > 0);
+    { key: 'system' as const, chars: sizes.systemPromptChars, label: 'System prompt', className: 'ctx-seg--system' },
+    { key: 'instructions' as const, chars: sizes.userInstructionsChars, label: 'User instructions', className: 'ctx-seg--instructions' },
+    { key: 'agents' as const, chars: sizes.agentDefinitionsChars, label: 'Agent definitions', className: 'ctx-seg--agents' },
+    { key: 'skills' as const, chars: sizes.skillDefinitionsChars, label: 'Skill definitions', className: 'ctx-seg--skills' },
+    { key: 'tools' as const, chars: sizes.toolDefinitionsChars, label: 'Tool definitions', className: 'ctx-seg--tools' },
+    { key: 'mcp' as const, chars: sizes.mcpDefinitionsChars, label: 'MCP definitions', className: 'ctx-seg--mcp' },
+    { key: 'conversation' as const, chars: sizes.conversationChars, label: 'Conversation', className: 'ctx-seg--conversation' },
+    { key: 'other' as const, chars: sizes.otherChars, label: 'Other', className: 'ctx-seg--other' }
+  ].filter((segment) => segment.chars > 0);
+  const total = segments.reduce((sum, segment) => sum + segment.chars, 0);
 
-  const pct = (chars: number) => totalChars > 0 ? Math.min(100, (chars / totalChars) * 100).toFixed(3) : '0';
+  const pct = (value: number) => total > 0 ? Math.min(100, (value / total) * 100).toFixed(3) : '0';
+
+  useEffect(() => {
+    if (!selectedSegment) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelectedSegment(undefined);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [selectedSegment]);
 
   return (
     <div className="ctx-window">
       <div className="ctx-window-header">
         <span className="ctx-window-label">Context window</span>
         {sizes.model && <span className="ctx-window-model">{sizes.model}</span>}
-        <span className="ctx-window-usage">{formatChars(totalChars)} total</span>
+        <span className="ctx-window-usage">{formatChars(total)} at start</span>
       </div>
-      <div className="ctx-bar" role="img" aria-label={`Context window: ${formatChars(totalChars)}`}>
+      <div className="ctx-bar" role="group" aria-label={`Context window at start: ${formatChars(total)}`}>
         {segments.map((seg) => (
-          <div
+          <button
+            type="button"
             key={seg.key}
             className={`ctx-seg ${seg.className}`}
             style={{ width: `${pct(seg.chars)}%` }}
             title={`${seg.label}: ${formatChars(seg.chars)}`}
+            aria-label={`Show ${seg.label}, ${formatChars(seg.chars)}`}
+            onClick={() => setSelectedSegment({ key: seg.key, label: seg.label })}
           />
         ))}
       </div>
       <div className="ctx-legend">
         {segments.map((seg) =>
-          seg.key === 'attachments' ? (
-            <span key={seg.key} className="ctx-legend-item ctx-legend-item--attachments ctx-legend-item--popover">
+          seg.key === 'instructions' && instructions.length > 0 ? (
+            <span key={seg.key} className="ctx-legend-item ctx-legend-item--instructions ctx-legend-item--popover">
+              <span className="ctx-legend-dot" />
+              <span className="ctx-legend-hint">{seg.label}</span> <span className="ctx-legend-val">{formatChars(seg.chars)}</span>
+              <div className="ctx-popover">
+                <div className="ctx-popover-title">{seg.label} ({instructions.length})</div>
+                {instructions.map((instruction, index) => (
+                  <div key={`${instruction.path ?? instruction.name}-${index}`} className="ctx-popover-row">
+                    <span className="ctx-popover-name" title={instruction.path ?? instruction.name}>
+                      {formatInstructionPath(instruction.path ?? instruction.name)}
+                    </span>
+                    <span className="ctx-popover-size">{formatChars(instruction.sizeChars)}</span>
+                  </div>
+                ))}
+              </div>
+            </span>
+          ) : seg.key === 'other' && attachments.length > 0 ? (
+            <span key={seg.key} className="ctx-legend-item ctx-legend-item--other ctx-legend-item--popover">
               <span className="ctx-legend-dot" />
               <span className="ctx-legend-hint">{seg.label}</span> <span className="ctx-legend-val">{formatChars(seg.chars)}</span>
               <div className="ctx-popover">
@@ -1615,6 +1577,22 @@ function ContextWindowBar({ sizes, attachments }: { sizes: ContextSizes; attachm
           )
         )}
       </div>
+      {selectedSegment && (
+        <div className="ctx-modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setSelectedSegment(undefined)}>
+          <section className="ctx-modal" role="dialog" aria-modal="true" aria-labelledby="ctx-modal-title">
+            <header className="ctx-modal-header">
+              <div>
+                <h3 id="ctx-modal-title">{selectedSegment.label}</h3>
+                <span>{formatChars(content?.[selectedSegment.key]?.length ?? 0)}</span>
+              </div>
+              <button type="button" className="ctx-modal-close" title="Close" aria-label="Close context detail" onClick={() => setSelectedSegment(undefined)}>
+                <X size={18} aria-hidden="true" />
+              </button>
+            </header>
+            <pre className="ctx-modal-content">{content?.[selectedSegment.key] || 'No source text was persisted for this section.'}</pre>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -1642,10 +1620,6 @@ function formatDateTime(value: string) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(value);
-}
-
-function formatPercent(value: number) {
-  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: value < 10 ? 1 : 0 }).format(value)}%`;
 }
 
 function formatAic(value: number) {

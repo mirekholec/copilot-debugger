@@ -1,0 +1,19 @@
+[
+  {
+    "type": "directory",
+    "name": "fixture",
+    "enabled": true,
+    "children": [
+      { "type": "agent", "name": "Fixture Agent", "description": "Agent attached to the fixture" },
+      { "type": "skill", "name": "fixture-skill", "description": "Skill attached to the fixture" }
+    ]
+  },
+  {
+    "type": "directory",
+    "name": "disabled",
+    "enabled": false,
+    "children": [
+      { "type": "agent", "name": "Disabled Agent" }
+    ]
+  }
+]
