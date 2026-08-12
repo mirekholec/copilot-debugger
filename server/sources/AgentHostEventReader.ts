@@ -78,6 +78,7 @@ interface MutableTool {
   turnId?: string;
   detail?: string;
   deferred?: boolean;
+  returnedTools?: string[];
   inputChars: number;
   outputChars: number;
   subagentName?: string;
@@ -423,7 +424,8 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
       if (tool) {
         tool.outputChars = serialize(data.result).length;
         if (tool.name === 'tool_search_tool') {
-          for (const name of parseDeferredToolNames(data.result)) deferredTools.add(name);
+          tool.returnedTools = parseDeferredToolNames(data.result);
+          for (const name of tool.returnedTools) deferredTools.add(name);
         }
       }
       continue;
@@ -635,6 +637,7 @@ function normalizeTool(tool: MutableTool): ToolCallInfo {
     name: tool.name,
     detail: tool.detail,
     deferred: tool.deferred,
+    returnedTools: tool.returnedTools,
     inputChars: tool.inputChars,
     outputChars: tool.outputChars,
     subagentName: tool.subagentName,

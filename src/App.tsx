@@ -74,6 +74,7 @@ interface ToolCallInfo {
   name: string;
   detail?: string;
   deferred?: boolean;
+  returnedTools?: string[];
   inputChars: number;
   outputChars: number;
   subagentName?: string;
@@ -1119,9 +1120,16 @@ function ToolCallRow({
         {showTurnColumn ? <span className="activity-label" aria-hidden={turnLabel ? undefined : true}>{turnLabel}</span> : null}
         {model ? <span className="activity-turn-model">{model}</span> : null}
         <span className="activity-label">tool</span>
-        <span className="activity-value">
-          <span className="activity-tool-name">{tc.name}</span>
-          {tc.detail ? <span className="activity-detail">{tc.detail}</span> : null}
+        <span className={tc.returnedTools?.length ? 'activity-value activity-value-search' : 'activity-value'}>
+          <span className="activity-tool-summary">
+            <span className="activity-tool-name">{tc.name}</span>
+            {tc.detail ? <span className="activity-detail">{tc.detail}</span> : null}
+          </span>
+          {tc.returnedTools?.length ? (
+            <span className="activity-tool-results" title={tc.returnedTools.join(', ')}>
+              returned: {tc.returnedTools.join(', ')}
+            </span>
+          ) : null}
         </span>
         {hasSubagent && (
           <span className="activity-subagent-chip">{tc.subagentName ?? 'subagent'} · {tc.subagentTurns!.length} turns</span>

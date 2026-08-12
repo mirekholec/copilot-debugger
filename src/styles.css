@@ -856,6 +856,28 @@ code {
   color: #e3a07e;
 }
 
+.activity-value-search {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: visible;
+  white-space: normal;
+}
+
+.activity-tool-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-tool-results {
+  color: #d8b29f;
+  font-size: 0.85em;
+  line-height: 1.35;
+  white-space: normal;
+}
+
 .activity-subagent-chip {
   flex: 0 0 auto;
   border: 1px solid rgba(227, 160, 126, 0.22);

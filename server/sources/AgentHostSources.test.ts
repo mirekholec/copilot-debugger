@@ -140,6 +140,7 @@ test('event reader marks tools returned by tool search as deferred', async (cont
   const tools = details.turns[0].toolCalls;
 
   assert.equal(tools.find((tool) => tool.name === 'tool_search_tool')?.deferred, false);
+  assert.deepEqual(tools.find((tool) => tool.name === 'tool_search_tool')?.returnedTools, ['runPlaywrightCode', 'readPage']);
   assert.equal(tools.find((tool) => tool.name === 'runPlaywrightCode')?.deferred, true);
 });
 
