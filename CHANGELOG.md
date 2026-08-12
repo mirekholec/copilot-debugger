@@ -7,21 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-08-10
+## [0.2.0] - 2026-08-12
+
+> [!WARNING]
+> **Breaking change:** Copilot Debugger now supports only the new [Copilot Agent Host](https://code.visualstudio.com/docs/agents/concepts/agent-host) data stored under `~/.copilot`. Legacy VS Code transcript and debug-log sessions are no longer supported and will not appear in the application.
 
 ### Added
 
-- Read-only Copilot Agent Host support for `~/.copilot`, including both event storage generations.
+- Read-only Copilot Agent Host and harness support for `~/.copilot`, including both event storage generations.
 - SQLite-backed token and AI Credit totals with WAL support and schema feature detection.
 - Lazy Agent Host turn, tool, skill, attachment, subagent, and compaction parsing.
 - Source, client, storage paths, context inventory, and incomplete-data warnings in the session UI.
 - Fixture tests for Agent Host events, SQLite usage, ID collisions, and incremental refresh behavior.
 - Clickable context-window segments with the persisted source text for each section.
 - Relevant argument summaries for tool calls, including files, commands, search patterns, skills, and documentation queries.
+- Model and move reasoning levels in session details.
+- Cached and returned tool definitions discovered through `tool_search_tool`.
 
 ### Changed
 
-- Removed the legacy VS Code transcript/debug-log source; the application now targets Agent Host only.
+- Removed the legacy VS Code transcript/debug-log source; the application now targets the new Agent Host exclusively.
 - Added session-scoped agents and skills from `agentHostCustomizations` snapshots.
 - Added MCP server inventory from the Agent Host process lifecycle log.
 - Session listing no longer requires parsing complete Agent Host event streams.
