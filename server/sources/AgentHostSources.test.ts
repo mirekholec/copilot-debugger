@@ -49,6 +49,8 @@ test('event reader folds turns, tools, subagents, overview and incomplete lines'
 
   assert.equal(header.sessionId, 'fixture-session');
   assert.equal(header.schemaVersion, 2);
+  assert.equal(header.reasoningEffort, 'high');
+  assert.equal(details.turns[0].turns[0].reasoningEffort, 'high');
   assert.equal(details.turns.length, 1);
   assert.equal(details.turns[0].index, 0);
   assert.equal(details.turns[0].toolCalls.length, 1);
@@ -157,6 +159,7 @@ test('store reader reads WAL-compatible catalog and aggregates usage once', asyn
   assert.equal(session?.cost.aiCredits, 0.6);
   assert.equal(session?.cost.requestCount, 2);
   assert.deepEqual(session?.cost.models, ['fixture-model', 'fixture-sub-model']);
+  assert.equal(session?.cost.perModel.find((model) => model.model === 'fixture-model')?.reasoningEffort, 'high');
   assert.equal(snapshot.usageBySession.get('fixture-session')?.[0].turnIndex, 1);
 });
 
@@ -241,13 +244,13 @@ function createFixtureDatabase(databasePath: string): void {
     CREATE TABLE turns (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, turn_index INTEGER NOT NULL, user_message TEXT, assistant_response TEXT, timestamp TEXT);
     CREATE TABLE assistant_usage_events (
       id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, turn_index INTEGER, agent_id TEXT, parent_tool_call_id TEXT,
-      model TEXT NOT NULL, input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER,
+      model TEXT NOT NULL, reasoning_effort TEXT, input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER,
       reasoning_tokens INTEGER, total_nano_aiu INTEGER, created_at TEXT
     );
     INSERT INTO sessions VALUES ('fixture-session', '/fixture/workspace', 'owner/repository', 'feature/test', 'Inspect the fixture', '2026-01-01T10:00:00.000Z', '2026-01-01T10:00:12.000Z', 'vscode-agent-host');
     INSERT INTO turns VALUES (1, 'fixture-session', 1, 'Inspect the fixture', 'Done', '2026-01-01T10:00:04.000Z');
-    INSERT INTO assistant_usage_events VALUES (1, 'fixture-session', 1, NULL, NULL, 'fixture-model', 100, 20, 30, 0, 0, 500000000, '2026-01-01T10:00:04.000Z');
-    INSERT INTO assistant_usage_events VALUES (2, 'fixture-session', 1, 'fixture-agent', 'tool-1', 'fixture-sub-model', 40, 10, 5, 0, 0, 100000000, '2026-01-01T10:00:08.000Z');
+    INSERT INTO assistant_usage_events VALUES (1, 'fixture-session', 1, NULL, NULL, 'fixture-model', 'high', 100, 20, 30, 0, 0, 500000000, '2026-01-01T10:00:04.000Z');
+    INSERT INTO assistant_usage_events VALUES (2, 'fixture-session', 1, 'fixture-agent', 'tool-1', 'fixture-sub-model', 'low', 40, 10, 5, 0, 0, 100000000, '2026-01-01T10:00:08.000Z');
   `);
   database.close();
 }

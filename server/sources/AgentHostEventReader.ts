@@ -46,6 +46,7 @@ export interface AgentHostEventHeader {
   startTime?: string;
   updatedAt?: string;
   selectedModel?: string;
+  reasoningEffort?: string;
   cwd?: string;
   repository?: string;
   branch?: string;
@@ -89,7 +90,7 @@ interface MutableTurn {
   userMessage?: string;
   timestamp: string;
   models: Set<string>;
-  assistantMessages: Array<{ turnId?: string; model?: string; outputTokens: number; timestamp: string }>;
+  assistantMessages: Array<{ turnId?: string; model?: string; reasoningEffort?: string; outputTokens: number; timestamp: string }>;
   tools: MutableTool[];
   toolIds: Set<string>;
   usage: AgentHostUsageRow[];
@@ -212,14 +213,17 @@ function consumeHeaderEvent(header: AgentHostEventHeader, event: AgentHostEvent)
     header.startTime = isoValue(data.startTime) ?? event.timestamp ?? header.startTime;
     header.schemaVersion = numberValue(data.version) ?? header.schemaVersion;
     header.selectedModel = stringValue(data.selectedModel) ?? header.selectedModel;
+    header.reasoningEffort = getReasoningEffort(data) ?? header.reasoningEffort;
     consumeContext(header, data.context);
   } else if (event.type === 'session.resume') {
     header.selectedModel = stringValue(data.selectedModel) ?? header.selectedModel;
+    header.reasoningEffort = getReasoningEffort(data) ?? header.reasoningEffort;
     consumeContext(header, data.context);
   } else if (event.type === 'session.context_changed') {
     consumeContext(header, data);
   } else if (event.type === 'session.model_change') {
     header.selectedModel = stringValue(data.newModel) ?? header.selectedModel;
+    header.reasoningEffort = getReasoningEffort(data) ?? header.reasoningEffort;
   } else if (event.type === 'user.message' && !header.firstUserMessage) {
     header.firstUserMessage = textValue(data.content)?.slice(0, 280);
   }
@@ -253,6 +257,7 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
   let conversationTokens: number | undefined;
   let toolDefinitionsTokens: number | undefined;
   let messageCount = 0;
+  const reasoningEffortByModel = new Map<string, string>();
 
   const createTurn = (event: AgentHostEvent, data: Record<string, unknown>): MutableTurn => {
     const interactionId = stringValue(data.interactionId);
@@ -293,6 +298,20 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
 
   for (const event of ordered) {
     const data = event.data;
+    if (event.type === 'session.start' || event.type === 'session.resume') {
+      const model = stringValue(data.selectedModel);
+      const reasoningEffort = getReasoningEffort(data);
+      if (model && reasoningEffort) reasoningEffortByModel.set(model, reasoningEffort);
+      continue;
+    }
+
+    if (event.type === 'session.model_change') {
+      const model = stringValue(data.newModel);
+      const reasoningEffort = getReasoningEffort(data);
+      if (model && reasoningEffort) reasoningEffortByModel.set(model, reasoningEffort);
+      continue;
+    }
+
     if (event.type === 'user.message') {
       const content = textValue(data.content)?.slice(0, TEXT_LIMIT);
       if (content?.trimStart().startsWith('<skill-context')) continue;
@@ -342,8 +361,10 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
       if (!turn) continue;
       const eventTurnId = stringValue(data.turnId);
       const model = stringValue(data.model);
+      const reasoningEffort = getReasoningEffort(data) ?? (model ? reasoningEffortByModel.get(model) : undefined);
       if (model) turn.models.add(model);
-      turn.assistantMessages.push({ turnId: eventTurnId, model, outputTokens: numberValue(data.outputTokens) ?? 0, timestamp: event.timestamp ?? turn.timestamp });
+      if (model && reasoningEffort) reasoningEffortByModel.set(model, reasoningEffort);
+      turn.assistantMessages.push({ turnId: eventTurnId, model, reasoningEffort, outputTokens: numberValue(data.outputTokens) ?? 0, timestamp: event.timestamp ?? turn.timestamp });
       const toolRequests = Array.isArray(data.toolRequests) ? data.toolRequests : [];
       for (const [requestIndex, requestValue] of toolRequests.entries()) {
         if (!isRecord(requestValue)) continue;
@@ -485,7 +506,7 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
     other: initialAttachmentContent
   };
 
-  const normalizedTurns = turns.map(normalizeTurn);
+  const normalizedTurns = turns.map((turn) => normalizeTurn(turn, reasoningEffortByModel));
   const overview: SessionOverview = {
     skills: availableSkills.sort(bySizeThenName),
     skillsAvailability: availableSkills.length ? 'catalog' : 'unavailable',
@@ -530,14 +551,15 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
   };
 }
 
-function normalizeTurn(turn: MutableTurn): TurnInfo {
+function normalizeTurn(turn: MutableTurn, reasoningEffortByModel: Map<string, string>): TurnInfo {
   const agentTurns: AgentTurnInfo[] = turn.usage.length
     ? turn.usage.map((row, index) => {
-        return { ...toAgentTurn(row, index), toolCalls: toolsForTurn(turn.tools, index) };
+        return { ...toAgentTurn(row, index, reasoningEffortByModel.get(row.model)), toolCalls: toolsForTurn(turn.tools, index) };
       })
     : turn.assistantMessages.map((message, index) => ({
         index: numericTurnId(message.turnId) ?? index,
         model: message.model,
+        reasoningEffort: message.reasoningEffort,
         inputTokens: 0,
         outputTokens: message.outputTokens,
         cachedTokens: 0,
@@ -583,10 +605,11 @@ function toolsForTurn(tools: MutableTool[], turnIndex: number): ToolCallInfo[] {
     .map(normalizeTool);
 }
 
-function toAgentTurn(row: AgentHostUsageRow, index = 0): AgentTurnInfo {
+function toAgentTurn(row: AgentHostUsageRow, index = 0, fallbackReasoningEffort?: string): AgentTurnInfo {
   return {
     index,
     model: row.model,
+    reasoningEffort: row.reasoningEffort ?? fallbackReasoningEffort,
     inputTokens: row.inputTokens,
     outputTokens: row.outputTokens,
     cachedTokens: row.cachedTokens,
@@ -817,6 +840,10 @@ function textValue(value: unknown): string | undefined {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function getReasoningEffort(data: Record<string, unknown>): string | undefined {
+  return stringValue(data.reasoningEffort) ?? stringValue(data.reasoning_effort);
 }
 
 function numberValue(value: unknown): number | undefined {

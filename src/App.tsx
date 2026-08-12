@@ -12,6 +12,7 @@ interface SourceFileInfo {
 
 interface ModelCostInfo {
   model: string;
+  reasoningEffort?: string;
   aiCredits?: number;
   inputTokens?: number;
   outputTokens?: number;
@@ -78,11 +79,12 @@ interface ToolCallInfo {
   subagentTurns?: AgentTurnInfo[];
 }
 
-// One individual agent LLM call inside a round. Models can differ between turns
-// within the same round (e.g. a subagent call runs on a different model).
+// One individual agent LLM call inside a round. The main agent uses one model
+// throughout a round; subagent turns may use a different model.
 interface AgentTurnInfo {
   index: number;
   model?: string;
+  reasoningEffort?: string;
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
@@ -889,7 +891,18 @@ function AppInner() {
                       </tbody>
                     </table>
                   ) : null}
-                  {selectedCost.models.length ? <span className="cost-models">{selectedCost.models.join(', ')}</span> : null}
+                  {selectedCost.models.length ? (
+                    <span className="cost-models">
+                      {selectedCost.models.map((model, index) => {
+                        const modelCost = selectedCost.perModel.find((entry) => entry.model === model);
+                        return (
+                        <span key={model}>
+                          {index > 0 ? ', ' : ''}{model}{modelCost?.reasoningEffort ? ` (${modelCost.reasoningEffort})` : ''}
+                        </span>
+                        );
+                      })}
+                    </span>
+                  ) : null}
                 </div>
               </section>
 
@@ -1084,12 +1097,26 @@ function Footer() {
   );
 }
 
-function ToolCallRow({ tc, nested }: { tc: ToolCallInfo; nested?: boolean }) {
+function ToolCallRow({
+  tc,
+  nested,
+  turnLabel,
+  showTurnColumn,
+  model
+}: {
+  tc: ToolCallInfo;
+  nested?: boolean;
+  turnLabel?: string;
+  showTurnColumn?: boolean;
+  model?: string;
+}) {
   const hasSubagent = tc.name === 'runSubagent' && !!tc.subagentTurns && tc.subagentTurns.length > 0;
 
   return (
     <div className={hasSubagent ? 'activity-subagent-wrap activity-subagent-open' : 'activity-subagent-wrap'}>
       <div className={nested ? 'activity-row activity-row-nested' : 'activity-row'}>
+        {showTurnColumn ? <span className="activity-label" aria-hidden={turnLabel ? undefined : true}>{turnLabel}</span> : null}
+        {model ? <span className="activity-turn-model">{model}</span> : null}
         <span className="activity-label">tool</span>
         <span className="activity-value">
           <span className="activity-tool-name">{tc.name}</span>
@@ -1102,20 +1129,47 @@ function ToolCallRow({ tc, nested }: { tc: ToolCallInfo; nested?: boolean }) {
       {hasSubagent && (
         <div className="activity-subagent-detail">
           {tc.subagentTurns!.map((st) => (
-            <div key={st.index} className="activity-turn">
-              <div className="activity-row activity-row-nested">
-                <span className="activity-label">turn {st.index + 1}</span>
-                <span className="activity-value">
-                  <span className="activity-tool-name">{st.model ?? '?'}</span>
-                </span>
-              </div>
-              {st.toolCalls.map((stc, i) => (
-                <ToolCallRow key={i} tc={stc} nested />
-              ))}
-            </div>
+            <AgentTurnActivity key={st.index} turn={st} showModel nested />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function AgentTurnActivity({
+  turn,
+  showModel,
+  nested
+}: {
+  turn: AgentTurnInfo;
+  showModel?: boolean;
+  nested?: boolean;
+}) {
+  const turnLabel = `turn ${turn.index + 1}`;
+  const model = showModel ? turn.model ?? '?' : undefined;
+
+  if (turn.toolCalls.length === 0) {
+    return (
+      <div className={nested ? 'activity-row activity-row-nested' : 'activity-row'}>
+        <span className="activity-label">{turnLabel}</span>
+        {model ? <span className="activity-turn-model">{model}</span> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="activity-turn">
+      {turn.toolCalls.map((tc, index) => (
+        <ToolCallRow
+          key={index}
+          tc={tc}
+          nested={nested}
+          turnLabel={index === 0 ? turnLabel : undefined}
+          showTurnColumn
+          model={index === 0 ? model : undefined}
+        />
+      ))}
     </div>
   );
 }
@@ -1124,6 +1178,15 @@ function TurnCard({ turn }: { turn: TurnInfo }) {
   const { rate, currency } = useSettings();
   const [showTurns, setShowTurns] = useState(false);
   const hasActivity = turn.toolCalls.length > 0 || turn.turns.length > 0;
+  const getModelEffort = (model: string): string | undefined => {
+    const efforts = [...new Set(
+      turn.turns
+        .filter((agentTurn) => agentTurn.model === model && agentTurn.reasoningEffort)
+        .map((agentTurn) => agentTurn.reasoningEffort)
+        .filter((effort): effort is string => Boolean(effort))
+    )];
+    return efforts.length ? efforts.join(', ') : undefined;
+  };
 
   return (
     <div className="turn-card" id={`turn-${turn.index}`}>
@@ -1142,7 +1205,19 @@ function TurnCard({ turn }: { turn: TurnInfo }) {
           {turn.outputTokens > 0 ? <span>{formatNumber(turn.outputTokens)} out</span> : null}
           {turn.cachedTokens > 0 ? <span>{formatNumber(turn.cachedTokens)} cached</span> : null}
           {turn.llmRequestCount > 0 ? <span>{turn.llmRequestCount} turns</span> : null}
-          {turn.models.map((m) => <span key={m} className="model-chip">{m}</span>)}
+          {turn.models.map((m) => {
+            const effort = getModelEffort(m);
+            return (
+              <span
+                key={m}
+                className="model-chip"
+                data-tooltip={effort ? `Reasoning effort: ${effort}` : undefined}
+                aria-label={effort ? `${m}, reasoning effort ${effort}` : m}
+              >
+                {m}
+              </span>
+            );
+          })}
           {turn.hasBrowserContext && <span className="browser-chip" title="Contains Attached Element Context">🌐 browser</span>}
           {hasActivity && (
             <button type="button" className="turns-toggle" onClick={() => setShowTurns((v) => !v)}>
@@ -1156,17 +1231,7 @@ function TurnCard({ turn }: { turn: TurnInfo }) {
         <div className="turn-activity">
           {turn.turns.length > 0 ? (
             turn.turns.map((t) => (
-              <div key={t.index} className="activity-turn">
-                <div className="activity-row activity-turn-row">
-                  <span className="activity-label">turn {t.index + 1}</span>
-                  <span className="activity-value">
-                    <span className="activity-tool-name">{t.model ?? '?'}</span>
-                  </span>
-                </div>
-                {t.toolCalls.map((tc, i) => (
-                  <ToolCallRow key={i} tc={tc} nested />
-                ))}
-              </div>
+              <AgentTurnActivity key={t.index} turn={t} />
             ))
           ) : (
             turn.toolCalls.map((tc, i) => <ToolCallRow key={i} tc={tc} />)

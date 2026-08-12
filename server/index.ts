@@ -10,6 +10,7 @@ import { CopilotAgentHostSource } from './sources/CopilotAgentHostSource.js';
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const clientDistRoot = path.resolve(currentDir, '..', 'client');
 const clientIndexPath = path.join(clientDistRoot, 'index.html');
+const pidFilePath = process.env.COPILOT_DEBUGGER_PID_FILE ?? path.resolve(process.cwd(), '.copilot-debugger.pid');
 
 const config = loadConfig();
 const app = express();
@@ -100,6 +101,7 @@ if (fs.existsSync(clientIndexPath)) {
 }
 
 const server = app.listen(config.port, '127.0.0.1', () => {
+  fs.writeFileSync(pidFilePath, `${process.pid}\n`, 'utf8');
   const url = `http://127.0.0.1:${config.port}`;
   console.log(`Copilot Debugger listening on ${url}`);
   if (process.env.COPILOT_DEBUGGER_OPEN === '1') {
@@ -113,7 +115,16 @@ source.start().catch((error) => {
 
 async function shutdown(): Promise<void> {
   await source.stop();
-  server.close(() => process.exit(0));
+  server.close(() => {
+    try {
+      if (fs.readFileSync(pidFilePath, 'utf8').trim() === String(process.pid)) {
+        fs.unlinkSync(pidFilePath);
+      }
+    } catch {
+      // The PID file may already have been removed by npm stop.
+    }
+    process.exit(0);
+  });
 }
 
 process.on('SIGINT', () => void shutdown());

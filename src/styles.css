@@ -717,8 +717,38 @@ code {
 }
 
 .turn-chips .model-chip {
+  position: relative;
   background: rgba(227, 160, 126, 0.1);
   color: #e3a07e;
+}
+
+.turn-chips .model-chip[data-tooltip]::after {
+  position: absolute;
+  z-index: 10;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  width: max-content;
+  max-width: 240px;
+  padding: 5px 8px;
+  border: 1px solid rgba(227, 160, 126, 0.28);
+  border-radius: 5px;
+  background: #262626;
+  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.35);
+  color: #f1d0bd;
+  content: attr(data-tooltip);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 4px);
+}
+
+.turn-chips .model-chip[data-tooltip]:hover::after,
+.turn-chips .model-chip[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .turn-chips .browser-chip {
@@ -762,6 +792,7 @@ code {
   gap: 8px;
   min-height: 18px;
   font-size: 0.74rem;
+  min-width: 0;
 }
 
 .activity-turn + .activity-turn {
@@ -794,10 +825,6 @@ code {
   gap: 3px;
 }
 
-.activity-turn-row {
-  margin-bottom: 2px;
-}
-
 .activity-label {
   color: #777777;
   flex: 0 0 56px;
@@ -810,12 +837,19 @@ code {
   color: #cccccc;
   font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
   min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
-.activity-count {
-  color: #888888;
-  margin-left: 3px;
-  font-size: 0.85em;
+.activity-turn-model {
+  flex: 0 1 180px;
+  min-width: 0;
+  overflow: hidden;
+  color: #e3a07e;
+  font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .activity-tool-name {

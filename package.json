@@ -18,6 +18,7 @@
     "dev": "concurrently -n api,web -c cyan,magenta npm:dev:api npm:dev:web",
     "dev:api": "tsx watch server/index.ts",
     "dev:web": "vite --host 127.0.0.1",
+    "stop": "node scripts/stop-server.mjs",
     "clean": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && npm run build:client && npm run build:server",
     "build:client": "tsc -p tsconfig.app.json --noEmit && vite build",

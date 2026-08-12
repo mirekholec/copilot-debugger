@@ -18,6 +18,7 @@ export interface SessionDataCompleteness {
 
 export interface ModelCostInfo {
   model: string;
+  reasoningEffort?: string;
   aiCredits?: number;
   inputTokens?: number;
   outputTokens?: number;
@@ -90,6 +91,7 @@ export interface ToolCallInfo {
 export interface AgentTurnInfo {
   index: number;
   model?: string;
+  reasoningEffort?: string;
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;

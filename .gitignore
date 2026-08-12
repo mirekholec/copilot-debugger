@@ -7,6 +7,7 @@ node_modules_old/
 dist/
 build/
 coverage/
+.copilot-debugger.pid
 
 # Logs
 *.log

@@ -8,6 +8,7 @@ export interface AgentHostUsageRow {
   agentId?: string;
   parentToolCallId?: string;
   model: string;
+  reasoningEffort?: string;
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
@@ -65,6 +66,7 @@ interface SqliteUsageRow {
   agent_id: string | null;
   parent_tool_call_id: string | null;
   model: string;
+  reasoning_effort: string | null;
   input_tokens: number | null;
   output_tokens: number | null;
   cache_read_tokens: number | null;
@@ -161,7 +163,7 @@ export class AgentHostStoreReader {
       if (tables.has('assistant_usage_events') && this.hasColumns(database, 'assistant_usage_events', ['session_id', 'model'])) {
         const available = this.columnNames(database, 'assistant_usage_events');
         const columns = [
-          'session_id', 'turn_index', 'agent_id', 'parent_tool_call_id', 'model', 'input_tokens', 'output_tokens',
+          'session_id', 'turn_index', 'agent_id', 'parent_tool_call_id', 'model', 'reasoning_effort', 'input_tokens', 'output_tokens',
           'cache_read_tokens', 'cache_write_tokens', 'reasoning_tokens', 'total_nano_aiu', 'created_at'
         ];
         const select = columns.map((column) => available.has(column) ? column : `NULL AS ${column}`).join(', ');
@@ -174,6 +176,7 @@ export class AgentHostStoreReader {
             agentId: optionalString(row.agent_id),
             parentToolCallId: optionalString(row.parent_tool_call_id),
             model: row.model,
+            reasoningEffort: optionalString(row.reasoning_effort),
             inputTokens: row.input_tokens ?? 0,
             outputTokens: row.output_tokens ?? 0,
             cachedTokens: row.cache_read_tokens ?? 0,
@@ -215,7 +218,14 @@ export class AgentHostStoreReader {
 }
 
 function aggregateUsage(rows: AgentHostUsageRow[]): SessionCostInfo {
-  const models = new Map<string, { aiCredits: number; inputTokens: number; outputTokens: number; cachedTokens: number; requestCount: number }>();
+  const models = new Map<string, {
+    aiCredits: number;
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens: number;
+    requestCount: number;
+    reasoningEfforts: Set<string>;
+  }>();
   let aiCredits = 0;
   let inputTokens = 0;
   let outputTokens = 0;
@@ -226,12 +236,20 @@ function aggregateUsage(rows: AgentHostUsageRow[]): SessionCostInfo {
     inputTokens += row.inputTokens;
     outputTokens += row.outputTokens;
     cachedTokens += row.cachedTokens;
-    const model = models.get(row.model) ?? { aiCredits: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, requestCount: 0 };
+    const model = models.get(row.model) ?? {
+      aiCredits: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+      requestCount: 0,
+      reasoningEfforts: new Set<string>()
+    };
     model.aiCredits += row.nanoAiu / 1_000_000_000;
     model.inputTokens += row.inputTokens;
     model.outputTokens += row.outputTokens;
     model.cachedTokens += row.cachedTokens;
     model.requestCount += 1;
+    if (row.reasoningEffort) model.reasoningEfforts.add(row.reasoningEffort);
     models.set(row.model, model);
   }
 
@@ -245,7 +263,15 @@ function aggregateUsage(rows: AgentHostUsageRow[]): SessionCostInfo {
     requestCount: rows.length || undefined,
     models: [...models.keys()].sort(),
     perModel: [...models.entries()]
-      .map(([model, value]) => ({ model, ...value }))
+      .map(([model, value]) => ({
+        model,
+        aiCredits: value.aiCredits,
+        inputTokens: value.inputTokens,
+        outputTokens: value.outputTokens,
+        cachedTokens: value.cachedTokens,
+        requestCount: value.requestCount,
+        reasoningEffort: value.reasoningEfforts.size ? [...value.reasoningEfforts].sort().join(', ') : undefined
+      }))
       .sort((left, right) => (right.aiCredits ?? 0) - (left.aiCredits ?? 0) || left.model.localeCompare(right.model))
   };
 }
