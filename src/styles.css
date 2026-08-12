@@ -972,11 +972,19 @@ code {
 }
 
 .tool-token-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: #e3a07e;
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tool-token-name svg {
+  flex: 0 0 auto;
+  color: #999999;
 }
 
 /* ── Models view ─────────────────────────────────────── */

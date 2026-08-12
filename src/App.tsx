@@ -73,6 +73,7 @@ interface NormalizedSession {
 interface ToolCallInfo {
   name: string;
   detail?: string;
+  deferred?: boolean;
   inputChars: number;
   outputChars: number;
   subagentName?: string;
@@ -1244,10 +1245,11 @@ function TurnCard({ turn }: { turn: TurnInfo }) {
 
 function ToolTokenAnalysis({ turns }: { turns: TurnInfo[] }) {
   const rows = useMemo(() => {
-    const map = new Map<string, { name: string; calls: number; input: number; output: number }>();
+    const map = new Map<string, { name: string; deferred: boolean; calls: number; input: number; output: number }>();
     for (const turn of turns) {
       for (const tool of turn.toolCalls) {
-        const current = map.get(tool.name) ?? { name: tool.name, calls: 0, input: 0, output: 0 };
+        const current = map.get(tool.name) ?? { name: tool.name, deferred: false, calls: 0, input: 0, output: 0 };
+        current.deferred ||= Boolean(tool.deferred);
         current.calls += 1;
         current.input += tool.inputChars;
         current.output += tool.outputChars;
@@ -1288,7 +1290,10 @@ function ToolTokenAnalysis({ turns }: { turns: TurnInfo[] }) {
         </div>
         {rows.map((row) => (
           <div key={row.name} className="tool-token-row">
-            <span className="tool-token-name">{row.name}</span>
+            <span className="tool-token-name">
+              {row.name}
+              {row.deferred && <Clock3 size={12} aria-label="Deferred tool" />}
+            </span>
             <span>{formatNumber(row.calls)}</span>
             <span className={highlightClass(row.input, totalInput)} title={`${formatNumber(row.input)} C`}>{formatChars(row.input)}</span>
             <span className={highlightClass(row.output, totalOutput)} title={`${formatNumber(row.output)} C`}>{formatChars(row.output)}</span>
@@ -1423,7 +1428,7 @@ function SessionOverviewPanel({ overview }: { overview: SessionOverview }) {
 
         {overview.tools.length > 0 && (
           <div className="overview-section overview-section--groups">
-            <h3 className="overview-section-title">Tools ({overview.tools.length})</h3>
+            <h3 className="overview-section-title">INITIAL TOOLS ({overview.tools.length})</h3>
             <div className="overview-tools-group">
               {visibleServers.map((server) => {
                 if (server === '__builtin__') {

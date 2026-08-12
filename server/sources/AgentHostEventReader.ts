@@ -77,6 +77,7 @@ interface MutableTool {
   name: string;
   turnId?: string;
   detail?: string;
+  deferred?: boolean;
   inputChars: number;
   outputChars: number;
   subagentName?: string;
@@ -249,6 +250,7 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
   const pendingUsers: Array<{ content?: string; interactionId?: string; timestamp: string; attachments: unknown[] }> = [];
   const attachments: AttachmentInfo[] = [];
   const usedTools = new Set<string>();
+  const deferredTools = new Set<string>();
   const usedAgents = new Set<string>();
   const systemMessages: string[] = [];
   let initialAttachmentChars = 0;
@@ -418,7 +420,12 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
     if (event.type === 'tool.execution_complete' || event.type === 'external_tool.completed') {
       const id = stringValue(data.toolCallId) ?? stringValue(data.requestId);
       const tool = id ? toolById.get(id) : undefined;
-      if (tool) tool.outputChars = serialize(data.result).length;
+      if (tool) {
+        tool.outputChars = serialize(data.result).length;
+        if (tool.name === 'tool_search_tool') {
+          for (const name of parseDeferredToolNames(data.result)) deferredTools.add(name);
+        }
+      }
       continue;
     }
 
@@ -484,6 +491,10 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
     if (!turn) continue;
     turn.models.add(row.model);
     turn.usage.push(row);
+  }
+
+  for (const tool of toolById.values()) {
+    tool.deferred = deferredTools.has(tool.name);
   }
 
   const systemPrompt = systemMessages[0] ?? '';
@@ -623,11 +634,28 @@ function normalizeTool(tool: MutableTool): ToolCallInfo {
   return {
     name: tool.name,
     detail: tool.detail,
+    deferred: tool.deferred,
     inputChars: tool.inputChars,
     outputChars: tool.outputChars,
     subagentName: tool.subagentName,
     subagentTurns: tool.subagentTurns
   };
+}
+
+function parseDeferredToolNames(value: unknown): string[] {
+  if (!isRecord(value)) return [];
+  for (const candidate of [value.content, value.detailedContent]) {
+    if (typeof candidate !== 'string') continue;
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) {
+        return [...new Set(parsed)];
+      }
+    } catch {
+      // Tool search output is not guaranteed to be JSON in every runtime version.
+    }
+  }
+  return [];
 }
 
 function normalizeAttachment(value: unknown): AttachmentInfo {

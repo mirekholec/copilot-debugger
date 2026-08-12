@@ -75,6 +75,7 @@ export interface SessionSourceSnapshot {
 export interface ToolCallInfo {
   name: string;
   detail?: string;
+  deferred?: boolean;
   inputChars: number;
   outputChars: number;
   // Present when name === 'runSubagent': the nested agent turns executed inside the

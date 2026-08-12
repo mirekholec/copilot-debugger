@@ -123,6 +123,26 @@ test('event reader groups assistant iterations under user interactions', async (
   assert.equal(details.turns[1].turns[0].toolCalls[1].detail, 'files: workspace/src/App.tsx');
 });
 
+test('event reader marks tools returned by tool search as deferred', async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-deferred-tools-'));
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  const eventPath = path.join(root, 'events.jsonl');
+  const events = [
+    { id: 'u1', timestamp: '2026-01-01T10:00:00.000Z', type: 'user.message', data: { content: 'Inspect the page' } },
+    { id: 's1', timestamp: '2026-01-01T10:00:01.000Z', type: 'assistant.turn_start', data: { turnId: '0' } },
+    { id: 't1', timestamp: '2026-01-01T10:00:02.000Z', type: 'tool.execution_start', data: { turnId: '0', toolCallId: 'search-1', toolName: 'tool_search_tool', arguments: { query: 'browser tools' } } },
+    { id: 't2', timestamp: '2026-01-01T10:00:03.000Z', type: 'tool.execution_complete', data: { toolCallId: 'search-1', result: { content: '["runPlaywrightCode","readPage"]', detailedContent: '["runPlaywrightCode","readPage"]' } } },
+    { id: 't3', timestamp: '2026-01-01T10:00:04.000Z', type: 'tool.execution_start', data: { turnId: '0', toolCallId: 'browser-1', toolName: 'runPlaywrightCode', arguments: { code: 'return true' } } }
+  ];
+  await fs.writeFile(eventPath, `${events.map((event) => JSON.stringify(event)).join('\n')}\n`);
+
+  const details = await new AgentHostEventReader().readDetails(eventPath, []);
+  const tools = details.turns[0].toolCalls;
+
+  assert.equal(tools.find((tool) => tool.name === 'tool_search_tool')?.deferred, false);
+  assert.equal(tools.find((tool) => tool.name === 'runPlaywrightCode')?.deferred, true);
+});
+
 test('event reader incrementally appends and resets after truncation', async (context) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-events-'));
   context.after(() => fs.rm(root, { recursive: true, force: true }));
