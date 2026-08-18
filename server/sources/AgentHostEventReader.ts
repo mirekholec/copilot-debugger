@@ -422,7 +422,7 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
       const id = stringValue(data.toolCallId) ?? stringValue(data.requestId);
       const tool = id ? toolById.get(id) : undefined;
       if (tool) {
-        tool.outputChars = serialize(data.result).length;
+        tool.outputChars = toolResultContent(data.result).length;
         if (tool.name === 'tool_search_tool') {
           tool.returnedTools = parseDeferredToolNames(data.result);
           for (const name of tool.returnedTools) deferredTools.add(name);
@@ -857,6 +857,17 @@ function serialize(value: unknown): string {
   } catch {
     return '';
   }
+}
+
+function toolResultContent(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (isRecord(value)) {
+    const content = textValue(value.content);
+    if (content !== undefined) return content;
+    const detailedContent = textValue(value.detailedContent);
+    if (detailedContent !== undefined) return detailedContent;
+  }
+  return serialize(value);
 }
 
 function textValue(value: unknown): string | undefined {

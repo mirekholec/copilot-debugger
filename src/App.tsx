@@ -323,7 +323,7 @@ function formatChars(value: number) {
   const formatted = new Intl.NumberFormat(undefined, {
     maximumFractionDigits: value < 100 ? 2 : value < 10_000 ? 1 : 0
   }).format(value / 1000);
-  return `${formatted} kC`;
+  return `${formatted}k chars`;
 }
 
 function formatInstructionPath(value: string) {
@@ -610,7 +610,7 @@ function AppInner() {
             <StateMessage title="No turns found" detail="This session has no debug log or no user messages were recorded." />
           ) : turns ? (
             <>
-              <ToolTokenAnalysis turns={turns} />
+              <ToolPayloadAnalysis turns={turns} />
               <div className="turns-list">
                 {turns.map((turn) => (
                   <TurnCard key={turn.index} turn={turn} />
@@ -1187,6 +1187,12 @@ function TurnCard({ turn }: { turn: TurnInfo }) {
   const { rate, currency } = useSettings();
   const [showTurns, setShowTurns] = useState(false);
   const hasActivity = turn.toolCalls.length > 0 || turn.turns.length > 0;
+  const hasMultipleRequests = turn.llmRequestCount > 1;
+  const latestInputTokens = turn.turns.at(-1)?.inputTokens;
+  const aggregateInputTitle = hasMultipleRequests
+    ? `Total across ${turn.llmRequestCount} model calls${latestInputTokens ? `. Latest input: ${formatNumber(latestInputTokens)} tokens.` : '.'}`
+    : undefined;
+  const aggregateTokenTitle = hasMultipleRequests ? `Total across ${turn.llmRequestCount} model calls.` : undefined;
   const getModelEffort = (model: string): string | undefined => {
     const efforts = [...new Set(
       turn.turns
@@ -1210,9 +1216,9 @@ function TurnCard({ turn }: { turn: TurnInfo }) {
           {turn.aiCredits !== undefined ? <strong>{formatAic(turn.aiCredits)} AIC <span className="kc-price">({aicToKc(turn.aiCredits, rate)} {currency})</span></strong> : <span className="no-aic">—</span>}
         </div>
         <div className="turn-chips">
-          {turn.inputTokens > 0 ? <span>{formatNumber(turn.inputTokens)} in</span> : null}
-          {turn.outputTokens > 0 ? <span>{formatNumber(turn.outputTokens)} out</span> : null}
-          {turn.cachedTokens > 0 ? <span>{formatNumber(turn.cachedTokens)} cached</span> : null}
+          {turn.inputTokens > 0 ? <span title={aggregateInputTitle}>{formatNumber(turn.inputTokens)} in{hasMultipleRequests ? ' total' : ''}</span> : null}
+          {turn.outputTokens > 0 ? <span title={aggregateTokenTitle}>{formatNumber(turn.outputTokens)} out{hasMultipleRequests ? ' total' : ''}</span> : null}
+          {turn.cachedTokens > 0 ? <span title={aggregateTokenTitle}>{formatNumber(turn.cachedTokens)} cached{hasMultipleRequests ? ' total' : ''}</span> : null}
           {turn.llmRequestCount > 0 ? <span>{turn.llmRequestCount} turns</span> : null}
           {turn.models.map((m) => {
             const effort = getModelEffort(m);
@@ -1251,7 +1257,7 @@ function TurnCard({ turn }: { turn: TurnInfo }) {
   );
 }
 
-function ToolTokenAnalysis({ turns }: { turns: TurnInfo[] }) {
+function ToolPayloadAnalysis({ turns }: { turns: TurnInfo[] }) {
   const rows = useMemo(() => {
     const map = new Map<string, { name: string; deferred: boolean; calls: number; input: number; output: number }>();
     for (const turn of turns) {
@@ -1280,8 +1286,8 @@ function ToolTokenAnalysis({ turns }: { turns: TurnInfo[] }) {
     <div className="tool-token-analysis">
       <div className="tool-token-header">
         <div>
-          <h3>Tool Usage</h3>
-          <p>Size of tool call and result payloads in the debug log.</p>
+          <h3>Tool Payloads</h3>
+          <p>Raw characters in tool calls and results passed to the model; not token usage.</p>
         </div>
         <div className="tool-token-total">
           {formatChars(totalInput + totalOutput)} total
@@ -1565,12 +1571,12 @@ function SessionOverviewPanel({ overview }: { overview: SessionOverview }) {
           </div>
         )}
       </div>
-      {overview.contextSizes && <ContextWindowBar sizes={overview.contextSizes} content={overview.contextContent} instructions={overview.userInstructions} attachments={overview.attachments} />}
+      {overview.contextSizes && <InitialPromptBar sizes={overview.contextSizes} content={overview.contextContent} instructions={overview.userInstructions} attachments={overview.attachments} />}
     </div>
   );
 }
 
-function ContextWindowBar({ sizes, content, instructions, attachments }: { sizes: ContextSizes; content?: Partial<Record<ContextSectionKey, string>>; instructions: InstructionInfo[]; attachments: AttachmentInfo[] }) {
+function InitialPromptBar({ sizes, content, instructions, attachments }: { sizes: ContextSizes; content?: Partial<Record<ContextSectionKey, string>>; instructions: InstructionInfo[]; attachments: AttachmentInfo[] }) {
   const [selectedSegment, setSelectedSegment] = useState<{ key: ContextSectionKey; label: string }>();
   const segments = [
     { key: 'system' as const, chars: sizes.systemPromptChars, label: 'System prompt', className: 'ctx-seg--system' },
@@ -1598,11 +1604,11 @@ function ContextWindowBar({ sizes, content, instructions, attachments }: { sizes
   return (
     <div className="ctx-window">
       <div className="ctx-window-header">
-        <span className="ctx-window-label">Context window</span>
+        <span className="ctx-window-label">Initial prompt</span>
         {sizes.model && <span className="ctx-window-model">{sizes.model}</span>}
-        <span className="ctx-window-usage">{formatChars(total)} at start</span>
+        <span className="ctx-window-usage">{formatChars(total)} raw text</span>
       </div>
-      <div className="ctx-bar" role="group" aria-label={`Context window at start: ${formatChars(total)}`}>
+      <div className="ctx-bar" role="group" aria-label={`Initial prompt: ${formatChars(total)} raw text`}>
         {segments.map((seg) => (
           <button
             type="button"

@@ -231,19 +231,13 @@ export class CopilotAgentHostSource implements SessionSource {
       this.customizationsReader.read(id)
     ])
       .then(([details, mcpServers, customizations]) => {
-        if (customizations.skills.length) {
+        if (customizations.skills.length && details.overview.skills.length === 0) {
           details.overview.skills = customizations.skills;
           details.overview.skillsAvailability = 'catalog';
-          if (details.overview.contextSizes?.skillDefinitionsChars === 0) {
-            details.overview.contextSizes.skillDefinitionsChars = customizations.skills.reduce((sum, skill) => sum + (skill.sizeChars ?? skill.sizeBytes ?? 0), 0);
-          }
         }
-        if (customizations.agents.length) {
+        if (customizations.agents.length && details.overview.agents.length === 0) {
           details.overview.agents = customizations.agents;
           details.overview.agentsAvailability = 'catalog';
-          if (details.overview.contextSizes?.agentDefinitionsChars === 0) {
-            details.overview.contextSizes.agentDefinitionsChars = customizations.agents.reduce((sum, agent) => sum + (agent.sizeChars ?? agent.sizeBytes ?? 0), 0);
-          }
         }
         if (customizations.sourcePath) session.sourcePaths.customizations = customizations.sourcePath;
         details.overview.userInstructions = details.instructionBlocks.map((block) => {

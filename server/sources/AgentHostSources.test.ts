@@ -87,6 +87,37 @@ test('event reader folds turns, tools, subagents, overview and incomplete lines'
   assert.ok(details.warnings.some((warning) => warning.includes('incomplete')));
 });
 
+test('event reader counts model-visible tool result content once', async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-tool-results-'));
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  const eventPath = path.join(root, 'events.jsonl');
+  const events = [
+    { id: 'u1', timestamp: '2026-01-01T10:00:00.000Z', type: 'user.message', data: { interactionId: 'interaction-1', content: 'Inspect results' } },
+    { id: 't1', timestamp: '2026-01-01T10:00:01.000Z', type: 'tool.execution_start', data: { turnId: '0', toolCallId: 'tool-1', toolName: 'view', arguments: {} } },
+    {
+      id: 't2',
+      timestamp: '2026-01-01T10:00:02.000Z',
+      type: 'tool.execution_complete',
+      data: { turnId: '0', toolCallId: 'tool-1', result: { content: 'model payload', detailedContent: 'debug trace that must not be counted' } }
+    },
+    { id: 't3', timestamp: '2026-01-01T10:00:03.000Z', type: 'tool.execution_start', data: { turnId: '0', toolCallId: 'tool-2', toolName: 'rg', arguments: {} } },
+    {
+      id: 't4',
+      timestamp: '2026-01-01T10:00:04.000Z',
+      type: 'tool.execution_complete',
+      data: { turnId: '0', toolCallId: 'tool-2', result: { detailedContent: 'fallback payload' } }
+    }
+  ];
+  await fs.writeFile(eventPath, `${events.map((event) => JSON.stringify(event)).join('\n')}\n`);
+
+  const details = await new AgentHostEventReader().readDetails(eventPath, []);
+
+  assert.deepEqual(
+    details.turns[0].toolCalls.map((tool) => tool.outputChars),
+    ['model payload'.length, 'fallback payload'.length]
+  );
+});
+
 test('event reader groups assistant iterations under user interactions', async (context) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-rounds-'));
   context.after(() => fs.rm(root, { recursive: true, force: true }));
@@ -250,9 +281,51 @@ test('Agent Host source discovers directory and root JSONL generations lazily', 
   assert.equal(fixture?.clientName, 'vscode-agent-host');
   assert.equal(fixture?.cost.aiCredits, 0.6);
   assert.equal((await source.getSessionTurns('fixture-session')).length, 1);
-  assert.deepEqual((await source.getSessionOverview('fixture-session'))?.agents.map((agent) => agent.name), ['Fixture Agent']);
+  assert.deepEqual((await source.getSessionOverview('fixture-session'))?.agents.map((agent) => agent.name), ['fixture-agent']);
   assert.equal(source.getSession('root-session')?.hasDetailedEvents, true);
   assert.equal(source.getSession('empty-session'), undefined);
+});
+
+test('Agent Host source keeps unpersisted customizations out of the initial prompt', async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-unpersisted-customizations-'));
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  const sessionId = 'unpersisted-session';
+  const stateRoot = path.join(root, 'session-state');
+  const customizationsRoot = path.join(root, 'customizations');
+  const agentPath = path.join(root, 'live.agent.md');
+  const skillPath = path.join(root, 'SKILL.md');
+  await fs.mkdir(stateRoot, { recursive: true });
+  await fs.mkdir(customizationsRoot);
+  await fs.writeFile(agentPath, 'Live agent definition');
+  await fs.writeFile(skillPath, 'Live skill definition');
+  await fs.writeFile(
+    path.join(stateRoot, `${sessionId}.jsonl`),
+    [
+      { id: 's1', timestamp: '2026-01-01T10:00:00.000Z', type: 'session.start', data: { sessionId, version: 1 } },
+      { id: 's2', timestamp: '2026-01-01T10:00:01.000Z', type: 'system.message', data: { content: '<tools><view>Read a file.</view></tools>' } },
+      { id: 'u1', timestamp: '2026-01-01T10:00:02.000Z', type: 'user.message', data: { content: 'Inspect the session' } }
+    ].map((event) => JSON.stringify(event)).join('\n') + '\n'
+  );
+  await fs.writeFile(path.join(customizationsRoot, `${sessionId}.json`), JSON.stringify([{
+    type: 'directory',
+    enabled: true,
+    children: [
+      { type: 'agent', name: 'Live Agent', uri: pathToFileURL(agentPath).href },
+      { type: 'skill', name: 'live-skill', uri: pathToFileURL(skillPath).href }
+    ]
+  }]));
+  const source = new CopilotAgentHostSource({ agentHostRoot: root, customizationsRoot, pollIntervalMs: 3_600_000 });
+  context.after(() => source.stop());
+
+  await source.start();
+  const overview = await source.getSessionOverview(sessionId);
+
+  assert.deepEqual(overview?.agents.map((agent) => agent.name), ['Live Agent']);
+  assert.deepEqual(overview?.skills.map((skill) => skill.name), ['live-skill']);
+  assert.equal(overview?.contextSizes?.agentDefinitionsChars, 0);
+  assert.equal(overview?.contextSizes?.skillDefinitionsChars, 0);
+  assert.equal(overview?.contextContent?.agents, '');
+  assert.equal(overview?.contextContent?.skills, '');
 });
 
 function createFixtureDatabase(databasePath: string): void {
