@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-18
+
+### Fixed
+
+- Count only the model-visible tool-result content, preventing duplicate `content` and `detailedContent` payloads from inflating tool sizes.
+- Keep initial-prompt totals historical by not adding current agent and skill catalogs when they were not persisted with the session.
+
+### Changed
+
+- Clearly label prompt and tool-payload figures as raw characters rather than tokens.
+- Mark per-round token figures as totals across model calls and expose the latest request input count in the tooltip.
+
 ## [0.2.0] - 2026-08-12
 
 > [!WARNING]
@@ -41,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expanded the project documentation and npm package overview.
 - Added configurable polling through `SESSION_POLL_INTERVAL_MS`.
 
-[Unreleased]: https://github.com/mirekholec/copilot-debugger/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/mirekholec/copilot-debugger/compare/v0.2.1...HEAD
+[0.2.1]: https://www.npmjs.com/package/copilot-debugger/v/0.2.1
 [0.2.0]: https://www.npmjs.com/package/copilot-debugger/v/0.2.0
 [0.1.4]: https://www.npmjs.com/package/copilot-debugger/v/0.1.4
