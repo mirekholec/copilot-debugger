@@ -1337,8 +1337,8 @@ code {
 }
 
 .overview-mcp-server--builtin:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(196, 181, 253, 0.16);
+  border-color: rgba(196, 181, 253, 0.48);
 }
 
 .mcp-server-title {
@@ -1354,8 +1354,8 @@ code {
 }
 
 .overview-mcp-server--builtin {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(196, 181, 253, 0.1);
+  border-color: rgba(196, 181, 253, 0.28);
 }
 
 .mcp-server-name {
@@ -1368,7 +1368,15 @@ code {
 }
 
 .overview-mcp-server--builtin .mcp-server-name {
-  color: #cccccc;
+  color: #c4b5fd;
+}
+
+.overview-mcp-server--builtin .mcp-server-title svg {
+  color: #c4b5fd;
+}
+
+.overview-mcp-server--builtin .mcp-tool-count {
+  color: rgba(221, 214, 254, 0.8);
 }
 
 .overview-mcp-server--agent {
