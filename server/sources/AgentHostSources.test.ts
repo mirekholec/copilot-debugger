@@ -118,6 +118,32 @@ test('event reader counts model-visible tool result content once', async (contex
   );
 });
 
+test('event reader builds initial context from JSONL messages before the first assistant response', async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-initial-context-'));
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  const eventPath = path.join(root, 'events.jsonl');
+  const systemContent = 'before<tools><available_skills><skill>A</skill></available_skills><read>Read</read></tools><custom_instruction>Keep <tools>nested text</tools></custom_instruction>after';
+  const events = [
+    { id: 's1', timestamp: '2026-01-01T10:00:00.000Z', type: 'system.message', data: { content: systemContent } },
+    { id: 'u1', timestamp: '2026-01-01T10:00:01.000Z', type: 'user.message', data: { content: 'Original', transformedContent: 'Final user prompt' } },
+    { id: 't1', timestamp: '2026-01-01T10:00:02.000Z', type: 'assistant.turn_start', data: { turnId: '0' } },
+    { id: 'u2', timestamp: '2026-01-01T10:00:03.000Z', type: 'user.message', data: { content: '', transformedContent: '<system_reminder>Remember</system_reminder>' } },
+    { id: 'a1', timestamp: '2026-01-01T10:00:04.000Z', type: 'assistant.message', data: { turnId: '0', content: 'Answer' } },
+    { id: 'u3', timestamp: '2026-01-01T10:00:05.000Z', type: 'user.message', data: { content: 'Next round' } }
+  ];
+  await fs.writeFile(eventPath, `${events.map((event) => JSON.stringify(event)).join('\n')}\n`);
+
+  const details = await new AgentHostEventReader().readDetails(eventPath, []);
+  const messages = details.overview.initialContextMessages ?? [];
+
+  assert.deepEqual(messages.map((message) => message.type), ['system', 'user', 'user']);
+  assert.equal(messages[1].content, 'Final user prompt');
+  assert.equal(messages[2].content, '<system_reminder>Remember</system_reminder>');
+  assert.equal(messages[0].sections?.find((section) => section.key === 'tools')?.content, '<tools><read>Read</read></tools>');
+  assert.match(messages[0].sections?.find((section) => section.key === 'instructions')?.content ?? '', /<tools>nested text<\/tools>/);
+  assert.equal(messages[0].sections?.reduce((sum, section) => sum + section.chars, 0), systemContent.length);
+});
+
 test('event reader groups assistant iterations under user interactions', async (context) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-rounds-'));
   context.after(() => fs.rm(root, { recursive: true, force: true }));

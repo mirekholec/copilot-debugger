@@ -162,6 +162,24 @@ export interface McpServerInfo {
 
 export type ContextSectionKey = 'system' | 'instructions' | 'agents' | 'skills' | 'tools' | 'mcp' | 'conversation' | 'other';
 
+export type InitialContextSectionKey = 'skills' | 'tools' | 'instructions' | 'other';
+
+export interface InitialContextSection {
+  key: InitialContextSectionKey;
+  label: string;
+  chars: number;
+  content: string;
+}
+
+export interface InitialContextMessage {
+  id: string;
+  type: 'system' | 'user';
+  label: string;
+  chars: number;
+  content: string;
+  sections?: InitialContextSection[];
+}
+
 export interface ContextSizes {
   systemPromptTotalBytes: number;
   systemPromptSkillsBytes: number;
@@ -197,6 +215,7 @@ export interface SessionOverview {
   mcpServersAvailability?: 'initialized' | 'unavailable';
   contextSizes?: ContextSizes;
   contextContent?: Partial<Record<ContextSectionKey, string>>;
+  initialContextMessages?: InitialContextMessage[];
 }
 
 export interface SessionSource {

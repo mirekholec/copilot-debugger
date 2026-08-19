@@ -162,6 +162,24 @@ interface McpServerInfo {
 
 type ContextSectionKey = 'system' | 'instructions' | 'agents' | 'skills' | 'tools' | 'mcp' | 'conversation' | 'other';
 
+type InitialContextSectionKey = 'skills' | 'tools' | 'instructions' | 'other';
+
+interface InitialContextSection {
+  key: InitialContextSectionKey;
+  label: string;
+  chars: number;
+  content: string;
+}
+
+interface InitialContextMessage {
+  id: string;
+  type: 'system' | 'user';
+  label: string;
+  chars: number;
+  content: string;
+  sections?: InitialContextSection[];
+}
+
 interface ContextSizes {
   systemPromptTotalBytes: number;
   systemPromptSkillsBytes: number;
@@ -197,6 +215,7 @@ interface SessionOverview {
   mcpServersAvailability?: 'initialized' | 'unavailable';
   contextSizes?: ContextSizes;
   contextContent?: Partial<Record<ContextSectionKey, string>>;
+  initialContextMessages?: InitialContextMessage[];
 }
 
 type LoadState = 'loading' | 'ready' | 'error';
@@ -1571,24 +1590,29 @@ function SessionOverviewPanel({ overview }: { overview: SessionOverview }) {
           </div>
         )}
       </div>
-      {overview.contextSizes && <InitialPromptBar sizes={overview.contextSizes} content={overview.contextContent} instructions={overview.userInstructions} attachments={overview.attachments} />}
+      {overview.contextSizes && overview.initialContextMessages && (
+        <InitialPromptBar sizes={overview.contextSizes} messages={overview.initialContextMessages} />
+      )}
     </div>
   );
 }
 
-function InitialPromptBar({ sizes, content, instructions, attachments }: { sizes: ContextSizes; content?: Partial<Record<ContextSectionKey, string>>; instructions: InstructionInfo[]; attachments: AttachmentInfo[] }) {
-  const [selectedSegment, setSelectedSegment] = useState<{ key: ContextSectionKey; label: string }>();
-  const segments = [
-    { key: 'system' as const, chars: sizes.systemPromptChars, label: 'System prompt', className: 'ctx-seg--system' },
-    { key: 'instructions' as const, chars: sizes.userInstructionsChars, label: 'User instructions', className: 'ctx-seg--instructions' },
-    { key: 'agents' as const, chars: sizes.agentDefinitionsChars, label: 'Agent definitions', className: 'ctx-seg--agents' },
-    { key: 'skills' as const, chars: sizes.skillDefinitionsChars, label: 'Skill definitions', className: 'ctx-seg--skills' },
-    { key: 'tools' as const, chars: sizes.toolDefinitionsChars, label: 'Tool definitions', className: 'ctx-seg--tools' },
-    { key: 'mcp' as const, chars: sizes.mcpDefinitionsChars, label: 'MCP definitions', className: 'ctx-seg--mcp' },
-    { key: 'conversation' as const, chars: sizes.conversationChars, label: 'Conversation', className: 'ctx-seg--conversation' },
-    { key: 'other' as const, chars: sizes.otherChars, label: 'Other', className: 'ctx-seg--other' }
-  ].filter((segment) => segment.chars > 0);
-  const total = segments.reduce((sum, segment) => sum + segment.chars, 0);
+function InitialPromptBar({ sizes, messages }: { sizes: ContextSizes; messages: InitialContextMessage[] }) {
+  const [selectedSegment, setSelectedSegment] = useState<{ label: string; content: string }>();
+  const visibleMessages = messages.filter((message) => message.chars > 0);
+  const total = visibleMessages.reduce((sum, message) => sum + message.chars, 0);
+  const systemCount = visibleMessages.filter((message) => message.type === 'system').length;
+  const legendItems = visibleMessages.flatMap<{ id: string; key: InitialContextSectionKey | 'user'; label: string; chars: number; content: string }>((message) =>
+    message.type === 'system'
+      ? (message.sections ?? []).map((section) => ({
+          id: `${message.id}-${section.key}`,
+          key: section.key,
+          label: systemCount > 1 ? `${message.label} · ${section.label}` : section.label,
+          chars: section.chars,
+          content: section.content
+        }))
+      : [{ id: message.id, key: 'user' as const, label: message.label, chars: message.chars, content: message.content }]
+  );
 
   const pct = (value: number) => total > 0 ? Math.min(100, (value / total) * 100).toFixed(3) : '0';
 
@@ -1604,62 +1628,55 @@ function InitialPromptBar({ sizes, content, instructions, attachments }: { sizes
   return (
     <div className="ctx-window">
       <div className="ctx-window-header">
-        <span className="ctx-window-label">Initial prompt</span>
+        <span className="ctx-window-label">Initial context</span>
         {sizes.model && <span className="ctx-window-model">{sizes.model}</span>}
         <span className="ctx-window-usage">{formatChars(total)} raw text</span>
       </div>
-      <div className="ctx-bar" role="group" aria-label={`Initial prompt: ${formatChars(total)} raw text`}>
-        {segments.map((seg) => (
+      <div className="ctx-bar" role="group" aria-label={`Initial context: ${formatChars(total)} raw text`}>
+        {visibleMessages.map((message) => message.type === 'system' ? (
+          <div
+            key={message.id}
+            className="ctx-message ctx-message--system"
+            style={{ width: `${pct(message.chars)}%` }}
+            role="group"
+            aria-label={`${message.label}: ${formatChars(message.chars)}`}
+          >
+            {(message.sections ?? []).map((section) => (
+              <button
+                type="button"
+                key={section.key}
+                className={`ctx-seg ctx-seg--${section.key}`}
+                style={{ width: `${(section.chars / message.chars) * 100}%` }}
+                title={`${section.label}: ${formatChars(section.chars)}`}
+                aria-label={`Show ${message.label} ${section.label}, ${formatChars(section.chars)}`}
+                onClick={() => setSelectedSegment({ label: systemCount > 1 ? `${message.label} · ${section.label}` : section.label, content: section.content })}
+              />
+            ))}
+          </div>
+        ) : (
           <button
             type="button"
-            key={seg.key}
-            className={`ctx-seg ${seg.className}`}
-            style={{ width: `${pct(seg.chars)}%` }}
-            title={`${seg.label}: ${formatChars(seg.chars)}`}
-            aria-label={`Show ${seg.label}, ${formatChars(seg.chars)}`}
-            onClick={() => setSelectedSegment({ key: seg.key, label: seg.label })}
+            key={message.id}
+            className="ctx-message ctx-message--user ctx-seg--user"
+            style={{ width: `${pct(message.chars)}%` }}
+            title={`${message.label}: ${formatChars(message.chars)}`}
+            aria-label={`Show ${message.label}, ${formatChars(message.chars)}`}
+            onClick={() => setSelectedSegment({ label: message.label, content: message.content })}
           />
         ))}
       </div>
       <div className="ctx-legend">
-        {segments.map((seg) =>
-          seg.key === 'instructions' && instructions.length > 0 ? (
-            <span key={seg.key} className="ctx-legend-item ctx-legend-item--instructions ctx-legend-item--popover">
-              <span className="ctx-legend-dot" />
-              <span className="ctx-legend-hint">{seg.label}</span> <span className="ctx-legend-val">{formatChars(seg.chars)}</span>
-              <div className="ctx-popover">
-                <div className="ctx-popover-title">{seg.label} ({instructions.length})</div>
-                {instructions.map((instruction, index) => (
-                  <div key={`${instruction.path ?? instruction.name}-${index}`} className="ctx-popover-row">
-                    <span className="ctx-popover-name" title={instruction.path ?? instruction.name}>
-                      {formatInstructionPath(instruction.path ?? instruction.name)}
-                    </span>
-                    <span className="ctx-popover-size">{formatChars(instruction.sizeChars)}</span>
-                  </div>
-                ))}
-              </div>
-            </span>
-          ) : seg.key === 'other' && attachments.length > 0 ? (
-            <span key={seg.key} className="ctx-legend-item ctx-legend-item--other ctx-legend-item--popover">
-              <span className="ctx-legend-dot" />
-              <span className="ctx-legend-hint">{seg.label}</span> <span className="ctx-legend-val">{formatChars(seg.chars)}</span>
-              <div className="ctx-popover">
-                <div className="ctx-popover-title">{seg.label} ({attachments.length})</div>
-                {attachments.map((a, i) => (
-                  <div key={i} className="ctx-popover-row">
-                    <span className="ctx-popover-name">{a.name}</span>
-                    <span className="ctx-popover-size">{formatChars(a.sizeBytes)}</span>
-                  </div>
-                ))}
-              </div>
-            </span>
-          ) : (
-            <span key={seg.key} className={`ctx-legend-item ctx-legend-item--${seg.key}`}>
-              <span className="ctx-legend-dot" />
-              {seg.label} <span className="ctx-legend-val">{formatChars(seg.chars)}</span>
-            </span>
-          )
-        )}
+        {legendItems.map((item) => (
+          <button
+            type="button"
+            key={item.id}
+            className={`ctx-legend-item ctx-legend-item--${item.key}`}
+            onClick={() => setSelectedSegment({ label: item.label, content: item.content })}
+          >
+            <span className="ctx-legend-dot" />
+            {item.label} <span className="ctx-legend-val">{formatChars(item.chars)}</span>
+          </button>
+        ))}
       </div>
       {selectedSegment && (
         <div className="ctx-modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setSelectedSegment(undefined)}>
@@ -1667,13 +1684,13 @@ function InitialPromptBar({ sizes, content, instructions, attachments }: { sizes
             <header className="ctx-modal-header">
               <div>
                 <h3 id="ctx-modal-title">{selectedSegment.label}</h3>
-                <span>{formatChars(content?.[selectedSegment.key]?.length ?? 0)}</span>
+                <span>{formatChars(selectedSegment.content.length)}</span>
               </div>
               <button type="button" className="ctx-modal-close" title="Close" aria-label="Close context detail" onClick={() => setSelectedSegment(undefined)}>
                 <X size={18} aria-hidden="true" />
               </button>
             </header>
-            <pre className="ctx-modal-content">{content?.[selectedSegment.key] || 'No source text was persisted for this section.'}</pre>
+            <pre className="ctx-modal-content">{selectedSegment.content}</pre>
           </section>
         </div>
       )}

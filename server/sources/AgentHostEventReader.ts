@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentHostUsageRow } from './AgentHostStoreReader.js';
-import type { AgentInfo, AgentTurnInfo, AttachmentInfo, InstructionInfo, SessionOverview, SkillInfo, ToolCallInfo, ToolInfo, TurnInfo } from './SessionSource.js';
+import type { AgentInfo, AgentTurnInfo, AttachmentInfo, InitialContextMessage, InitialContextSection, InstructionInfo, SessionOverview, SkillInfo, ToolCallInfo, ToolInfo, TurnInfo } from './SessionSource.js';
 
 const HEADER_LIMIT_BYTES = 256 * 1024;
 const TEXT_LIMIT = 20_000;
@@ -254,6 +254,8 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
   const deferredTools = new Set<string>();
   const usedAgents = new Set<string>();
   const systemMessages: string[] = [];
+  const initialContextMessages: InitialContextMessage[] = [];
+  let assistantResponseStarted = false;
   let initialAttachmentChars = 0;
   let initialAttachmentContent = '';
   let systemTokens: number | undefined;
@@ -317,6 +319,16 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
 
     if (event.type === 'user.message') {
       const content = textValue(data.content)?.slice(0, TEXT_LIMIT);
+      if (!assistantResponseStarted) {
+        const contextContent = textValue(data.transformedContent) ?? textValue(data.content) ?? '';
+        initialContextMessages.push({
+          id: event.id ?? `user-${event.order}`,
+          type: 'user',
+          label: `User message ${initialContextMessages.filter((message) => message.type === 'user').length + 1}`,
+          chars: contextContent.length,
+          content: contextContent
+        });
+      }
       if (content?.trimStart().startsWith('<skill-context')) continue;
       const interactionId = stringValue(data.interactionId);
       const rawAttachments = Array.isArray(data.attachments) ? data.attachments : [];
@@ -360,6 +372,7 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
     }
 
     if (event.type === 'assistant.message') {
+      assistantResponseStarted = true;
       const turn = resolveTurn(event);
       if (!turn) continue;
       const eventTurnId = stringValue(data.turnId);
@@ -450,7 +463,20 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
 
     if (event.type === 'system.message') {
       const content = textValue(data.content);
-      if (content) systemMessages.push(content);
+      if (content) {
+        systemMessages.push(content);
+        if (!assistantResponseStarted) {
+          const sections = splitSystemContext(content);
+          initialContextMessages.push({
+            id: event.id ?? `system-${event.order}`,
+            type: 'system',
+            label: `System message ${initialContextMessages.filter((message) => message.type === 'system').length + 1}`,
+            chars: content.length,
+            content,
+            sections
+          });
+        }
+      }
       continue;
     }
 
@@ -529,6 +555,7 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
     attachments: attachments.sort(bySizeThenName),
     tools: contextTools,
     toolsAvailability: contextTools.length ? 'definitions' : 'unavailable',
+    initialContextMessages,
     contextContent,
     contextSizes: {
       systemPromptTotalBytes: Buffer.byteLength(systemPrompt, 'utf8'),
@@ -562,6 +589,33 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
     warnings,
     instructionBlocks
   };
+}
+
+function splitSystemContext(content: string): InitialContextSection[] {
+  const definitions = [
+    { key: 'tools' as const, label: 'Tools', expression: /<tools(?:\s[^>]*)?>[\s\S]*?<\/tools>/g },
+    { key: 'skills' as const, label: 'Skills', expression: /<available_skills(?:\s[^>]*)?>[\s\S]*?<\/available_skills>/g },
+    { key: 'instructions' as const, label: 'Instructions', expression: /<custom_instruction(?:\s[^>]*)?>[\s\S]*?<\/custom_instruction>/g }
+  ];
+  const owners: Array<'skills' | 'tools' | 'instructions' | 'other'> = Array(content.length).fill('other');
+  for (const { key, expression } of definitions) {
+    for (const match of content.matchAll(expression)) {
+      const start = match.index ?? 0;
+      const end = start + match[0].length;
+      owners.fill(key, start, end);
+    }
+  }
+  const contentByKey: Record<'skills' | 'tools' | 'instructions' | 'other', string[]> = {
+    skills: [],
+    tools: [],
+    instructions: [],
+    other: []
+  };
+  for (let index = 0; index < content.length; index += 1) contentByKey[owners[index]].push(content[index]);
+  const labels = { skills: 'Skills', tools: 'Tools', instructions: 'Instructions', other: 'Other' };
+  return (['skills', 'tools', 'instructions', 'other'] as const)
+    .map((key): InitialContextSection => ({ key, label: labels[key], chars: contentByKey[key].length, content: contentByKey[key].join('') }))
+    .filter((section) => section.chars > 0);
 }
 
 function normalizeTurn(turn: MutableTurn, reasoningEffortByModel: Map<string, string>): TurnInfo {
