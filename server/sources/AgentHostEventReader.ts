@@ -324,7 +324,7 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
         initialContextMessages.push({
           id: event.id ?? `user-${event.order}`,
           type: 'user',
-          label: `User message ${initialContextMessages.filter((message) => message.type === 'user').length + 1}`,
+          label: 'Message',
           chars: contextContent.length,
           content: contextContent
         });
@@ -612,8 +612,8 @@ function splitSystemContext(content: string): InitialContextSection[] {
     other: []
   };
   for (let index = 0; index < content.length; index += 1) contentByKey[owners[index]].push(content[index]);
-  const labels = { skills: 'Skills', tools: 'Tools', instructions: 'Instructions', other: 'Other' };
-  return (['skills', 'tools', 'instructions', 'other'] as const)
+  const labels = { skills: 'Skills', tools: 'Tools', instructions: 'Instructions', other: 'System message' };
+  return (['other', 'tools', 'skills', 'instructions'] as const)
     .map((key): InitialContextSection => ({ key, label: labels[key], chars: contentByKey[key].length, content: contentByKey[key].join('') }))
     .filter((section) => section.chars > 0);
 }

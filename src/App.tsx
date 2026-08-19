@@ -1628,7 +1628,7 @@ function InitialPromptBar({ sizes, messages }: { sizes: ContextSizes; messages: 
   return (
     <div className="ctx-window">
       <div className="ctx-window-header">
-        <span className="ctx-window-label">Initial context</span>
+        <span className="ctx-window-label">Context window</span>
         {sizes.model && <span className="ctx-window-model">{sizes.model}</span>}
         <span className="ctx-window-usage">{formatChars(total)} raw text</span>
       </div>
