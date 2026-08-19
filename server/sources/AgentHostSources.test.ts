@@ -264,32 +264,52 @@ test('customizations reader returns model-invokable session-scoped agents and sk
   const agentDefinition = '---\nname: Fixture Agent\ndisable-model-invocation: false\n---\nAgent instructions';
   const implicitAgentDefinition = '---\nname: Implicit Agent\n---\nImplicit agent instructions';
   const disabledAgentDefinition = '---\nname: Disabled Agent\ndisable-model-invocation: true\n---\nDisabled agent instructions';
+  const recoveredAgentDefinition = '---\nname: Recovered Agent\n---\nRecovered agent instructions';
+  const recoveredDisabledAgentDefinition = '---\nname: Recovered Disabled Agent\ndisable-model-invocation: true\n---\nRecovered disabled agent instructions';
   const skillDefinition = '---\nname: fixture-skill\n---\nSkill instructions';
   const agentPath = path.join(root, 'fixture.agent.md');
   const implicitAgentPath = path.join(root, 'implicit.agent.md');
   const disabledAgentPath = path.join(root, 'disabled.agent.md');
+  const renamedAgentsPath = path.join(root, 'renamed-agents');
+  const recoveredAgentPath = path.join(renamedAgentsPath, 'recovered.agent.md');
+  const recoveredDisabledAgentPath = path.join(renamedAgentsPath, 'recovered-disabled.agent.md');
   const skillPath = path.join(root, 'SKILL.md');
   await fs.writeFile(agentPath, agentDefinition);
   await fs.writeFile(implicitAgentPath, implicitAgentDefinition);
   await fs.writeFile(disabledAgentPath, disabledAgentDefinition);
+  await fs.mkdir(renamedAgentsPath);
+  await fs.writeFile(recoveredAgentPath, recoveredAgentDefinition);
+  await fs.writeFile(recoveredDisabledAgentPath, recoveredDisabledAgentDefinition);
   await fs.writeFile(skillPath, skillDefinition);
-  await fs.writeFile(path.join(root, 'fixture-session.json'), JSON.stringify([{
-    type: 'directory',
-    enabled: true,
-    children: [
-      { type: 'agent', name: 'Fixture Agent', description: 'Agent attached to the fixture', uri: pathToFileURL(agentPath).href },
-      { type: 'agent', name: 'Implicit Agent', description: 'Uses the default model-invocation setting', uri: pathToFileURL(implicitAgentPath).href },
-      { type: 'agent', name: 'Disabled Agent', description: 'Must not be listed', uri: pathToFileURL(disabledAgentPath).href },
-      { type: 'skill', name: 'fixture-skill', description: 'Skill attached to the fixture', uri: pathToFileURL(skillPath).href }
-    ]
-  }]));
+  await fs.writeFile(path.join(root, 'fixture-session.json'), JSON.stringify([
+    {
+      type: 'directory',
+      enabled: true,
+      children: [
+        { type: 'agent', name: 'Fixture Agent', description: 'Agent attached to the fixture', uri: pathToFileURL(agentPath).href },
+        { type: 'agent', name: 'Implicit Agent', description: 'Uses the default model-invocation setting', uri: pathToFileURL(implicitAgentPath).href },
+        { type: 'agent', name: 'Disabled Agent', description: 'Must not be listed', uri: pathToFileURL(disabledAgentPath).href },
+        { type: 'skill', name: 'fixture-skill', description: 'Skill attached to the fixture', uri: pathToFileURL(skillPath).href }
+      ]
+    },
+    {
+      type: 'directory',
+      enabled: true,
+      uri: pathToFileURL(renamedAgentsPath).href,
+      children: [
+        { type: 'agent', name: 'Recovered Agent', uri: pathToFileURL(path.join(renamedAgentsPath, 'old-recovered.agent.md')).href },
+        { type: 'agent', name: 'Recovered Disabled Agent', uri: pathToFileURL(path.join(renamedAgentsPath, 'old-recovered-disabled.agent.md')).href }
+      ]
+    }
+  ]));
 
   const customizations = await new AgentHostCustomizationsReader(root).read('fixture-session');
 
-  assert.deepEqual(customizations.agents.map((agent) => agent.name), ['Fixture Agent', 'Implicit Agent']);
+  assert.deepEqual(customizations.agents.map((agent) => agent.name), ['Fixture Agent', 'Implicit Agent', 'Recovered Agent']);
   assert.deepEqual(customizations.skills.map((skill) => skill.name), ['fixture-skill']);
   assert.equal(customizations.agents.find((agent) => agent.name === 'Fixture Agent')?.path, agentPath);
   assert.equal(customizations.agents.find((agent) => agent.name === 'Fixture Agent')?.sizeChars, agentDefinition.length);
+  assert.equal(customizations.agents.find((agent) => agent.name === 'Recovered Agent')?.path, recoveredAgentPath);
   assert.equal(customizations.skills[0].sizeChars, skillDefinition.length);
   assert.ok(customizations.sourcePath?.endsWith('fixture-session.json'));
 });

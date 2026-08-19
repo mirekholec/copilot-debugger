@@ -6,6 +6,7 @@ import type { AgentInfo, SkillInfo } from './SessionSource.js';
 
 interface CustomizationContainer {
   enabled?: boolean;
+  uri?: string;
   children?: CustomizationItem[];
 }
 
@@ -52,10 +53,13 @@ export class AgentHostCustomizationsReader {
         if (!isContainer(value) || value.enabled === false) continue;
         for (const child of value.children ?? []) {
           if (child.enabled === false) continue;
-          const definition = await readDefinition(child.uri);
+          const catalogName = text(child.name);
+          const definition = child.type === 'agent'
+            ? await readAgentDefinition(child.uri, value.uri, catalogName)
+            : await readDefinition(child.uri);
           const agentDefinition = child.type === 'agent' ? parseAgentDefinition(definition?.content) : undefined;
           if (agentDefinition?.modelInvocationDisabled) continue;
-          const name = text(child.name) ?? agentDefinition?.name;
+          const name = catalogName ?? agentDefinition?.name;
           if (!name) continue;
           const description = text(child.description) ?? agentDefinition?.description ?? '';
           if (child.type === 'agent') {
@@ -124,6 +128,37 @@ async function readDefinition(uri: string | undefined): Promise<{ path: string; 
   } catch {
     return undefined;
   }
+}
+
+async function readAgentDefinition(
+  uri: string | undefined,
+  containerUri: string | undefined,
+  name: string | undefined
+): Promise<{ path: string; content: string } | undefined> {
+  const definition = await readDefinition(uri);
+  return definition ?? findRenamedAgentDefinition(containerUri, name);
+}
+
+async function findRenamedAgentDefinition(
+  containerUri: string | undefined,
+  expectedName: string | undefined
+): Promise<{ path: string; content: string } | undefined> {
+  if (!containerUri?.startsWith('file://') || !expectedName) return undefined;
+  try {
+    const directory = fileURLToPath(containerUri);
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.agent.md')) continue;
+      const definitionPath = path.join(directory, entry.name);
+      const content = await fs.readFile(definitionPath, 'utf8');
+      if (parseAgentDefinition(content)?.name === expectedName) {
+        return { path: definitionPath, content };
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
 }
 
 function byName(left: { name: string }, right: { name: string }): number {

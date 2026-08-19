@@ -339,11 +339,11 @@ function sessionUrl(id: string) {
   return `${SESSION_ROUTE_PREFIX}${encodeURIComponent(id)}`;
 }
 
-function formatChars(value: number) {
+function formatChars(value: number, includeUnit = true) {
   const formatted = new Intl.NumberFormat(undefined, {
     maximumFractionDigits: value < 100 ? 2 : value < 10_000 ? 1 : 0
   }).format(value / 1000);
-  return `${formatted}k chars`;
+  return `${formatted}k${includeUnit ? ' chars' : ''}`;
 }
 
 function formatInstructionPath(value: string) {
@@ -1675,7 +1675,7 @@ function InitialPromptBar({ sizes, messages }: { sizes: ContextSizes; messages: 
             onClick={() => setSelectedSegment({ label: item.label, content: item.content })}
           >
             <span className="ctx-legend-dot" />
-            {item.label} <span className="ctx-legend-val">{formatChars(item.chars)}</span>
+            {item.label} <span className="ctx-legend-val">{formatChars(item.chars, false)}</span>
           </button>
         ))}
       </div>
