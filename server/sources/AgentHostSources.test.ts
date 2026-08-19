@@ -69,6 +69,10 @@ test('event reader folds turns, tools, subagents, overview and incomplete lines'
   assert.match(details.overview.contextContent?.skills ?? '', /fixture-skill/);
   assert.match(details.overview.contextContent?.tools ?? '', /read_file/);
   assert.match(details.overview.contextContent?.other ?? '', /browser-context\.json/);
+  assert.match(
+    details.overview.initialContextMessages?.[0].sections?.find((section) => section.key === 'agents')?.content ?? '',
+    /fixture-agent/
+  );
   assert.ok((details.overview.contextSizes?.skillDefinitionsChars ?? 0) > 0);
   assert.ok((details.overview.contextSizes?.agentDefinitionsChars ?? 0) > 0);
   assert.ok((details.overview.contextSizes?.toolDefinitionsChars ?? 0) > 0);
@@ -254,29 +258,38 @@ test('process log reader returns MCP servers initialized for the session window'
   assert.deepEqual(servers[0].documentedTools, ['docs_search']);
 });
 
-test('customizations reader returns enabled session-scoped agents and skills', async (context) => {
+test('customizations reader returns model-invokable session-scoped agents and skills', async (context) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-customizations-'));
   context.after(() => fs.rm(root, { recursive: true, force: true }));
-  const agentDefinition = '---\nname: Fixture Agent\n---\nAgent instructions';
+  const agentDefinition = '---\nname: Fixture Agent\ndisable-model-invocation: false\n---\nAgent instructions';
+  const implicitAgentDefinition = '---\nname: Implicit Agent\n---\nImplicit agent instructions';
+  const disabledAgentDefinition = '---\nname: Disabled Agent\ndisable-model-invocation: true\n---\nDisabled agent instructions';
   const skillDefinition = '---\nname: fixture-skill\n---\nSkill instructions';
   const agentPath = path.join(root, 'fixture.agent.md');
+  const implicitAgentPath = path.join(root, 'implicit.agent.md');
+  const disabledAgentPath = path.join(root, 'disabled.agent.md');
   const skillPath = path.join(root, 'SKILL.md');
   await fs.writeFile(agentPath, agentDefinition);
+  await fs.writeFile(implicitAgentPath, implicitAgentDefinition);
+  await fs.writeFile(disabledAgentPath, disabledAgentDefinition);
   await fs.writeFile(skillPath, skillDefinition);
   await fs.writeFile(path.join(root, 'fixture-session.json'), JSON.stringify([{
     type: 'directory',
     enabled: true,
     children: [
       { type: 'agent', name: 'Fixture Agent', description: 'Agent attached to the fixture', uri: pathToFileURL(agentPath).href },
+      { type: 'agent', name: 'Implicit Agent', description: 'Uses the default model-invocation setting', uri: pathToFileURL(implicitAgentPath).href },
+      { type: 'agent', name: 'Disabled Agent', description: 'Must not be listed', uri: pathToFileURL(disabledAgentPath).href },
       { type: 'skill', name: 'fixture-skill', description: 'Skill attached to the fixture', uri: pathToFileURL(skillPath).href }
     ]
   }]));
 
   const customizations = await new AgentHostCustomizationsReader(root).read('fixture-session');
 
-  assert.deepEqual(customizations.agents.map((agent) => agent.name), ['Fixture Agent']);
+  assert.deepEqual(customizations.agents.map((agent) => agent.name), ['Fixture Agent', 'Implicit Agent']);
   assert.deepEqual(customizations.skills.map((skill) => skill.name), ['fixture-skill']);
-  assert.equal(customizations.agents[0].sizeChars, agentDefinition.length);
+  assert.equal(customizations.agents.find((agent) => agent.name === 'Fixture Agent')?.path, agentPath);
+  assert.equal(customizations.agents.find((agent) => agent.name === 'Fixture Agent')?.sizeChars, agentDefinition.length);
   assert.equal(customizations.skills[0].sizeChars, skillDefinition.length);
   assert.ok(customizations.sourcePath?.endsWith('fixture-session.json'));
 });
@@ -312,7 +325,7 @@ test('Agent Host source discovers directory and root JSONL generations lazily', 
   assert.equal(source.getSession('empty-session'), undefined);
 });
 
-test('Agent Host source keeps unpersisted customizations out of the initial prompt', async (context) => {
+test('Agent Host source adds model-invokable customizations to the initial context', async (context) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-unpersisted-customizations-'));
   context.after(() => fs.rm(root, { recursive: true, force: true }));
   const sessionId = 'unpersisted-session';
@@ -322,7 +335,7 @@ test('Agent Host source keeps unpersisted customizations out of the initial prom
   const skillPath = path.join(root, 'SKILL.md');
   await fs.mkdir(stateRoot, { recursive: true });
   await fs.mkdir(customizationsRoot);
-  await fs.writeFile(agentPath, 'Live agent definition');
+  await fs.writeFile(agentPath, '---\nname: Live Agent\ndescription: Live agent description\ndisable-model-invocation: false\n---\nLive agent definition');
   await fs.writeFile(skillPath, 'Live skill definition');
   await fs.writeFile(
     path.join(stateRoot, `${sessionId}.jsonl`),
@@ -348,10 +361,15 @@ test('Agent Host source keeps unpersisted customizations out of the initial prom
 
   assert.deepEqual(overview?.agents.map((agent) => agent.name), ['Live Agent']);
   assert.deepEqual(overview?.skills.map((skill) => skill.name), ['live-skill']);
-  assert.equal(overview?.contextSizes?.agentDefinitionsChars, 0);
+  assert.ok((overview?.contextSizes?.agentDefinitionsChars ?? 0) > 0);
   assert.equal(overview?.contextSizes?.skillDefinitionsChars, 0);
-  assert.equal(overview?.contextContent?.agents, '');
+  assert.match(overview?.contextContent?.agents ?? '', /<name>Live Agent<\/name>/);
+  assert.match(overview?.contextContent?.agents ?? '', /<path>.*live\.agent\.md<\/path>/);
   assert.equal(overview?.contextContent?.skills, '');
+  const agentSection = overview?.initialContextMessages?.find((message) => message.type === 'system')
+    ?.sections?.find((section) => section.key === 'agents');
+  assert.equal(agentSection?.content, overview?.contextContent?.agents);
+  assert.equal(agentSection?.chars, overview?.contextSizes?.agentDefinitionsChars);
 });
 
 function createFixtureDatabase(databasePath: string): void {

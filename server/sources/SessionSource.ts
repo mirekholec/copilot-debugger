@@ -127,6 +127,7 @@ export interface SkillInfo {
 export interface AgentInfo {
   name: string;
   description: string;
+  path?: string;
   sizeBytes?: number;
   sizeChars?: number;
 }
@@ -162,7 +163,7 @@ export interface McpServerInfo {
 
 export type ContextSectionKey = 'system' | 'instructions' | 'agents' | 'skills' | 'tools' | 'mcp' | 'conversation' | 'other';
 
-export type InitialContextSectionKey = 'skills' | 'tools' | 'instructions' | 'other';
+export type InitialContextSectionKey = 'agents' | 'skills' | 'tools' | 'instructions' | 'other';
 
 export interface InitialContextSection {
   key: InitialContextSectionKey;

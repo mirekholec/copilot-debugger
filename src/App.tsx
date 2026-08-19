@@ -127,6 +127,7 @@ interface SkillInfo {
 interface AgentInfo {
   name: string;
   description: string;
+  path?: string;
   sizeBytes?: number;
   sizeChars?: number;
 }
@@ -162,7 +163,7 @@ interface McpServerInfo {
 
 type ContextSectionKey = 'system' | 'instructions' | 'agents' | 'skills' | 'tools' | 'mcp' | 'conversation' | 'other';
 
-type InitialContextSectionKey = 'skills' | 'tools' | 'instructions' | 'other';
+type InitialContextSectionKey = 'agents' | 'skills' | 'tools' | 'instructions' | 'other';
 
 interface InitialContextSection {
   key: InitialContextSectionKey;
@@ -1431,7 +1432,7 @@ function SessionOverviewPanel({ overview }: { overview: SessionOverview }) {
             <h3 className="overview-section-title">Agents ({overview.agents.length})</h3>
             <div className="overview-tools-group">
               {visibleAgents.map((agent) => (
-                <div key={agent.name} className="overview-mcp-server" title={agent.description}>
+                <div key={agent.name} className="overview-mcp-server overview-mcp-server--agent" title={agent.description}>
                   <span className="mcp-server-name">{agent.name}</span>
                   {agent.sizeChars !== undefined || agent.sizeBytes !== undefined
                     ? <span className="mcp-tool-count">{formatChars(agent.sizeChars ?? agent.sizeBytes ?? 0)}</span>

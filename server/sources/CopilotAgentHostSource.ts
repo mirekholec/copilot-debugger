@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';
 import fg from 'fast-glob';
@@ -7,7 +8,7 @@ import { AgentHostCustomizationsReader } from './AgentHostCustomizationsReader.j
 import { AgentHostEventReader, type AgentHostEventDetails, type AgentHostEventHeader } from './AgentHostEventReader.js';
 import { AgentHostProcessLogReader } from './AgentHostProcessLogReader.js';
 import { AgentHostStoreReader, type AgentHostStoreSession, type AgentHostStoreSnapshot } from './AgentHostStoreReader.js';
-import type { NormalizedSession, SessionSource, SessionSourceSnapshot, TurnInfo, SessionOverview } from './SessionSource.js';
+import type { AgentInfo, NormalizedSession, SessionSource, SessionSourceSnapshot, TurnInfo, SessionOverview } from './SessionSource.js';
 
 interface CopilotAgentHostSourceOptions {
   agentHostRoot: string;
@@ -238,6 +239,7 @@ export class CopilotAgentHostSource implements SessionSource {
         if (customizations.agents.length && details.overview.agents.length === 0) {
           details.overview.agents = customizations.agents;
           details.overview.agentsAvailability = 'catalog';
+          addAgentCatalogToContext(details.overview, customizations.agents);
         }
         if (customizations.sourcePath) session.sourcePaths.customizations = customizations.sourcePath;
         details.overview.userInstructions = details.instructionBlocks.map((block) => {
@@ -358,4 +360,77 @@ function isEmptySession(session: NormalizedSession): boolean {
     && (session.cost.aiCredits ?? 0) === 0
     && session.tools.length === 0
     && session.agents.length === 0;
+}
+
+function addAgentCatalogToContext(overview: SessionOverview, agents: AgentInfo[]): void {
+  const content = serializeAgentCatalog(agents);
+  if (!content) return;
+
+  overview.contextContent ??= {};
+  overview.contextContent.agents = content;
+  const messages = overview.initialContextMessages ?? (overview.initialContextMessages = []);
+  const agentSection = { key: 'agents' as const, label: 'Agents', chars: content.length, content };
+  const systemMessage = messages.find((message) => message.type === 'system');
+
+  if (systemMessage) {
+    const sections = systemMessage.sections?.length
+      ? systemMessage.sections
+      : [{ key: 'other' as const, label: 'System message', chars: systemMessage.content.length, content: systemMessage.content }];
+    systemMessage.content += content;
+    systemMessage.chars = systemMessage.content.length;
+    systemMessage.sections = [...sections, agentSection];
+  } else {
+    messages.unshift({
+      id: 'custom-agent-catalog',
+      type: 'system',
+      label: 'System message 1',
+      chars: content.length,
+      content,
+      sections: [agentSection]
+    });
+  }
+
+  if (overview.contextSizes) {
+    const bytes = Buffer.byteLength(content, 'utf8');
+    overview.contextSizes.systemPromptTotalBytes += bytes;
+    overview.contextSizes.systemPromptAgentsBytes = bytes;
+    overview.contextSizes.agentDefinitionsChars = content.length;
+  }
+}
+
+function serializeAgentCatalog(agents: AgentInfo[]): string {
+  if (!agents.length) return '';
+  const entries = agents.map((agent) => {
+    const sourcePath = agent.path ? `\n    <path>${escapeXml(displayAgentPath(agent.path))}</path>` : '';
+    return [
+      '  <agent>',
+      `    <name>${escapeXml(agent.name)}</name>`,
+      `    <description>${escapeXml(agent.description)}</description>${sourcePath}`,
+      '  </agent>'
+    ].join('\n');
+  });
+  return ['<agents>', ...entries, '</agents>'].join('\n');
+}
+
+function displayAgentPath(filePath: string): string {
+  const normalizedPath = filePath.replace(/\\/g, '/');
+  const homePath = os.homedir().replace(/\\/g, '/').replace(/\/$/, '');
+  return normalizedPath === homePath
+    ? '~'
+    : normalizedPath.startsWith(`${homePath}/`)
+      ? `~${normalizedPath.slice(homePath.length)}`
+      : normalizedPath;
+}
+
+function escapeXml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&apos;'
+    };
+    return entities[character];
+  });
 }

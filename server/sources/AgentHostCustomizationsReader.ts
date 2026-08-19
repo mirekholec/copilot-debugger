@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseDocument } from 'yaml';
 import type { AgentInfo, SkillInfo } from './SessionSource.js';
 
 interface CustomizationContainer {
@@ -13,6 +14,13 @@ interface CustomizationItem {
   name?: string;
   description?: string;
   uri?: string;
+  enabled?: boolean;
+}
+
+interface AgentDefinition {
+  name?: string;
+  description?: string;
+  modelInvocationDisabled: boolean;
 }
 
 export interface AgentHostInstruction {
@@ -43,16 +51,28 @@ export class AgentHostCustomizationsReader {
       for (const value of parsed) {
         if (!isContainer(value) || value.enabled === false) continue;
         for (const child of value.children ?? []) {
-          const name = text(child.name);
-          if (!name) continue;
+          if (child.enabled === false) continue;
           const definition = await readDefinition(child.uri);
-          const item = {
-            name,
-            description: text(child.description) ?? '',
-            sizeChars: definition?.content.length
-          };
-          if (child.type === 'agent') agents.set(name, item);
-          if (child.type === 'skill') skills.set(name, item);
+          const agentDefinition = child.type === 'agent' ? parseAgentDefinition(definition?.content) : undefined;
+          if (agentDefinition?.modelInvocationDisabled) continue;
+          const name = text(child.name) ?? agentDefinition?.name;
+          if (!name) continue;
+          const description = text(child.description) ?? agentDefinition?.description ?? '';
+          if (child.type === 'agent') {
+            agents.set(name, {
+              name,
+              description,
+              path: definition?.path,
+              sizeChars: definition?.content.length
+            });
+          }
+          if (child.type === 'skill') {
+            skills.set(name, {
+              name,
+              description,
+              sizeChars: definition?.content.length
+            });
+          }
           if (child.type === 'rule' && definition) instructions.push({ name, ...definition });
         }
       }
@@ -74,6 +94,26 @@ function isContainer(value: unknown): value is CustomizationContainer {
 
 function text(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function parseAgentDefinition(content: string | undefined): AgentDefinition | undefined {
+  if (!content) return undefined;
+  const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!frontmatter) return undefined;
+  const document = parseDocument(frontmatter[1]);
+  if (document.errors.length > 0) return undefined;
+  const value = document.toJS();
+  if (!isRecord(value)) return undefined;
+  const disabled = value['disable-model-invocation'] ?? value.disableModelInvocation;
+  return {
+    name: text(value.name),
+    description: text(value.description),
+    modelInvocationDisabled: disabled === true || (typeof disabled === 'string' && disabled.trim().toLowerCase() === 'true')
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 async function readDefinition(uri: string | undefined): Promise<{ path: string; content: string } | undefined> {

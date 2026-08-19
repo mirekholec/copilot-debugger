@@ -594,10 +594,11 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
 function splitSystemContext(content: string): InitialContextSection[] {
   const definitions = [
     { key: 'tools' as const, label: 'Tools', expression: /<tools(?:\s[^>]*)?>[\s\S]*?<\/tools>/g },
+    { key: 'agents' as const, label: 'Agents', expression: /<agents(?:\s[^>]*)?>[\s\S]*?<\/agents>/g },
     { key: 'skills' as const, label: 'Skills', expression: /<available_skills(?:\s[^>]*)?>[\s\S]*?<\/available_skills>/g },
     { key: 'instructions' as const, label: 'Instructions', expression: /<custom_instruction(?:\s[^>]*)?>[\s\S]*?<\/custom_instruction>/g }
   ];
-  const owners: Array<'skills' | 'tools' | 'instructions' | 'other'> = Array(content.length).fill('other');
+  const owners: Array<'agents' | 'skills' | 'tools' | 'instructions' | 'other'> = Array(content.length).fill('other');
   for (const { key, expression } of definitions) {
     for (const match of content.matchAll(expression)) {
       const start = match.index ?? 0;
@@ -605,15 +606,16 @@ function splitSystemContext(content: string): InitialContextSection[] {
       owners.fill(key, start, end);
     }
   }
-  const contentByKey: Record<'skills' | 'tools' | 'instructions' | 'other', string[]> = {
+  const contentByKey: Record<'agents' | 'skills' | 'tools' | 'instructions' | 'other', string[]> = {
+    agents: [],
     skills: [],
     tools: [],
     instructions: [],
     other: []
   };
   for (let index = 0; index < content.length; index += 1) contentByKey[owners[index]].push(content[index]);
-  const labels = { skills: 'Skills', tools: 'Tools', instructions: 'Instructions', other: 'System message' };
-  return (['other', 'tools', 'skills', 'instructions'] as const)
+  const labels = { agents: 'Agents', skills: 'Skills', tools: 'Tools', instructions: 'Instructions', other: 'System message' };
+  return (['other', 'tools', 'agents', 'skills', 'instructions'] as const)
     .map((key): InitialContextSection => ({ key, label: labels[key], chars: contentByKey[key].length, content: contentByKey[key].join('') }))
     .filter((section) => section.chars > 0);
 }
@@ -727,7 +729,7 @@ function normalizeContextAttachment(value: unknown): AttachmentInfo {
 }
 
 function parseNamedBlocks<T extends SkillInfo | AgentInfo>(text: string, container: string, item: string): T[] {
-  const containerMatch = text.match(new RegExp(`<${container}>([\\s\\S]*?)<\\/${container}>`));
+  const containerMatch = text.match(new RegExp(`<${container}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${container}>`));
   if (!containerMatch) return [];
   const results: T[] = [];
   const expression = new RegExp(`<${item}>[\\s\\S]*?<name>([\\s\\S]*?)<\\/name>[\\s\\S]*?<description>([\\s\\S]*?)<\\/description>[\\s\\S]*?<\\/${item}>`, 'g');
@@ -764,7 +766,7 @@ function parseSystemToolBlocks(text: string): ToolInfo[] {
 }
 
 function blockByteLength(text: string, name: string): number {
-  const match = text.match(new RegExp(`<${name}>[\\s\\S]*?<\\/${name}>`));
+  const match = text.match(new RegExp(`<${name}(?:\\s[^>]*)?>[\\s\\S]*?<\\/${name}>`));
   return Buffer.byteLength(match?.[0] ?? '', 'utf8');
 }
 
