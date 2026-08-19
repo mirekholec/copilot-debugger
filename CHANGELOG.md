@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-08-19
+
+### Added
+
+- Reconstruct the initial context window from the persisted system and transformed user messages recorded before the first assistant response.
+- Open each context message or section directly from the context-window bar and legend.
+
+### Changed
+
+- Split system messages into tools, skills, custom instructions, and remaining system content while preserving nested definitions.
+- Present the initial context in recorded message order with clearer context-window labels.
+
 ## [0.2.1] - 2026-08-18
 
 ### Fixed
@@ -53,7 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expanded the project documentation and npm package overview.
 - Added configurable polling through `SESSION_POLL_INTERVAL_MS`.
 
-[Unreleased]: https://github.com/mirekholec/copilot-debugger/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/mirekholec/copilot-debugger/compare/v0.2.2...HEAD
+[0.2.2]: https://www.npmjs.com/package/copilot-debugger/v/0.2.2
 [0.2.1]: https://www.npmjs.com/package/copilot-debugger/v/0.2.1
 [0.2.0]: https://www.npmjs.com/package/copilot-debugger/v/0.2.0
 [0.1.4]: https://www.npmjs.com/package/copilot-debugger/v/0.1.4
