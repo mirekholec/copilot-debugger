@@ -1234,6 +1234,11 @@ code {
   padding: 16px 20px;
 }
 
+.session-overview--current {
+  margin-top: 18px;
+  margin-bottom: 0;
+}
+
 /* ─── Context Window Bar ─────────────────────────────────────────────────── */
 
 .ctx-window {
@@ -1289,6 +1294,21 @@ code {
   border: 0;
   border-radius: 0;
   cursor: pointer;
+}
+
+.ctx-final-segment {
+  height: 100%;
+  min-width: 0;
+}
+
+.ctx-window--current .ctx-bar {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ctx-window-empty {
+  padding: 8px 0 2px;
+  color: #777777;
+  font-size: 0.78rem;
 }
 
 .ctx-message {

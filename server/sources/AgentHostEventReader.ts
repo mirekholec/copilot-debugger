@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentHostUsageRow } from './AgentHostStoreReader.js';
-import type { AgentInfo, AgentTurnInfo, AttachmentInfo, InitialContextMessage, InitialContextSection, InstructionInfo, SessionOverview, SkillInfo, ToolCallInfo, ToolInfo, TurnInfo } from './SessionSource.js';
+import type { AgentInfo, AgentTurnInfo, AttachmentInfo, ContextWindowSnapshot, InitialContextMessage, InitialContextSection, InstructionInfo, SessionOverview, SkillInfo, ToolCallInfo, ToolInfo, TurnInfo } from './SessionSource.js';
 
 const HEADER_LIMIT_BYTES = 256 * 1024;
 const TEXT_LIMIT = 20_000;
@@ -261,6 +261,7 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
   let systemTokens: number | undefined;
   let conversationTokens: number | undefined;
   let toolDefinitionsTokens: number | undefined;
+  let finalContext: ContextWindowSnapshot | undefined;
   let messageCount = 0;
   const reasoningEffortByModel = new Map<string, string>();
 
@@ -481,10 +482,21 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
     }
 
     if (event.type === 'session.compaction_start' || event.type === 'session.shutdown') {
-      systemTokens ??= numberValue(data.systemTokens);
-      conversationTokens ??= numberValue(data.conversationTokens);
-      toolDefinitionsTokens ??= numberValue(data.toolDefinitionsTokens);
+      const snapshot = readContextSnapshot(data, event.timestamp);
+      systemTokens ??= snapshot?.systemTokens;
+      conversationTokens ??= snapshot?.conversationTokens;
+      toolDefinitionsTokens ??= snapshot?.toolDefinitionsTokens;
+      if (snapshot) {
+        finalContext = mergeContextSnapshot(finalContext, snapshot);
+      }
     }
+  }
+
+  const usageContext = createUsageContextSnapshot(usage);
+  if (usageContext) {
+    finalContext = finalContext
+      ? mergeContextSnapshot(usageContext, finalContext)
+      : usageContext;
   }
 
   while (pendingUsers.length) {
@@ -557,6 +569,7 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
     toolsAvailability: contextTools.length ? 'definitions' : 'unavailable',
     initialContextMessages,
     contextContent,
+    finalContext,
     contextSizes: {
       systemPromptTotalBytes: Buffer.byteLength(systemPrompt, 'utf8'),
       systemPromptSkillsBytes: blockByteLength(systemPrompt, 'available_skills'),
@@ -571,7 +584,7 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
       mcpDefinitionsChars: 0,
       conversationChars: normalizedTurns[0]?.userMessage?.length ?? 0,
       otherChars: initialAttachmentChars,
-      model: normalizedTurns.flatMap((turn) => turn.models)[0],
+      model: normalizedTurns.flatMap((turn) => turn.models)[0] ?? latestMainUsage(usage)?.model,
       systemTokens,
       conversationTokens,
       toolDefinitionsTokens
@@ -589,6 +602,59 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
     warnings,
     instructionBlocks
   };
+}
+
+function readContextSnapshot(data: Record<string, unknown>, capturedAt?: string): ContextWindowSnapshot | undefined {
+  const snapshot: ContextWindowSnapshot = {
+    currentTokens: numberValue(data.currentTokens),
+    systemTokens: numberValue(data.systemTokens),
+    conversationTokens: numberValue(data.conversationTokens),
+    toolDefinitionsTokens: numberValue(data.toolDefinitionsTokens),
+    model: stringValue(data.model) ?? stringValue(data.currentModel) ?? stringValue(data.selectedModel),
+    capturedAt,
+    source: 'event'
+  };
+  return snapshot.currentTokens !== undefined
+    || snapshot.systemTokens !== undefined
+    || snapshot.conversationTokens !== undefined
+    || snapshot.toolDefinitionsTokens !== undefined
+    || snapshot.model !== undefined
+    ? snapshot
+    : undefined;
+}
+
+function mergeContextSnapshot(previous: ContextWindowSnapshot | undefined, current: ContextWindowSnapshot): ContextWindowSnapshot {
+  return {
+    currentTokens: current.currentTokens ?? previous?.currentTokens,
+    systemTokens: current.systemTokens ?? previous?.systemTokens,
+    conversationTokens: current.conversationTokens ?? previous?.conversationTokens,
+    toolDefinitionsTokens: current.toolDefinitionsTokens ?? previous?.toolDefinitionsTokens,
+    model: current.model ?? previous?.model,
+    capturedAt: current.capturedAt ?? previous?.capturedAt,
+    source: current.currentTokens !== undefined ? current.source : previous?.source ?? current.source
+  };
+}
+
+export function createUsageContextSnapshot(usage: AgentHostUsageRow[]): ContextWindowSnapshot | undefined {
+  const latest = latestMainUsage(usage);
+  if (!latest || latest.inputTokens <= 0) return undefined;
+  return {
+    currentTokens: latest.inputTokens,
+    model: latest.model,
+    capturedAt: latest.timestamp,
+    source: 'usage'
+  };
+}
+
+export function latestMainUsage(usage: AgentHostUsageRow[]): AgentHostUsageRow | undefined {
+  return usage
+    .filter((row) => !row.agentId && !row.parentToolCallId)
+    .reduce<AgentHostUsageRow | undefined>((latest, row) => {
+      if (!latest) return row;
+      if (!row.timestamp) return latest.timestamp ? latest : row;
+      if (!latest.timestamp || row.timestamp >= latest.timestamp) return row;
+      return latest;
+    }, undefined);
 }
 
 function splitSystemContext(content: string): InitialContextSection[] {

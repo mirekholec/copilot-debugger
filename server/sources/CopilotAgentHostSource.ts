@@ -5,10 +5,10 @@ import chokidar, { type FSWatcher } from 'chokidar';
 import fg from 'fast-glob';
 import { parse as parseYaml } from 'yaml';
 import { AgentHostCustomizationsReader } from './AgentHostCustomizationsReader.js';
-import { AgentHostEventReader, type AgentHostEventDetails, type AgentHostEventHeader } from './AgentHostEventReader.js';
+import { AgentHostEventReader, createUsageContextSnapshot, type AgentHostEventDetails, type AgentHostEventHeader } from './AgentHostEventReader.js';
 import { AgentHostProcessLogReader } from './AgentHostProcessLogReader.js';
-import { AgentHostStoreReader, type AgentHostStoreSession, type AgentHostStoreSnapshot } from './AgentHostStoreReader.js';
-import type { AgentInfo, NormalizedSession, SessionSource, SessionSourceSnapshot, TurnInfo, SessionOverview } from './SessionSource.js';
+import { AgentHostStoreReader, type AgentHostStoredTurn, type AgentHostStoreSession, type AgentHostStoreSnapshot, type AgentHostUsageRow } from './AgentHostStoreReader.js';
+import type { AgentInfo, AgentTurnInfo, NormalizedSession, SessionSource, SessionSourceSnapshot, TurnInfo, SessionOverview } from './SessionSource.js';
 
 interface CopilotAgentHostSourceOptions {
   agentHostRoot: string;
@@ -41,6 +41,7 @@ export class CopilotAgentHostSource implements SessionSource {
   private readonly databasePath: string;
   private sessions = new Map<string, NormalizedSession>();
   private usageBySession: AgentHostStoreSnapshot['usageBySession'] = new Map();
+  private turnsBySession: AgentHostStoreSnapshot['turnsBySession'] = new Map();
   private detailPromises = new Map<string, Promise<AgentHostEventDetails | undefined>>();
   private details = new Map<string, AgentHostEventDetails>();
   private watcher?: FSWatcher;
@@ -123,6 +124,7 @@ export class CopilotAgentHostSource implements SessionSource {
 
       this.sessions = next;
       this.usageBySession = store.usageBySession;
+      this.turnsBySession = store.turnsBySession;
       this.details.clear();
       this.detailPromises.clear();
       this.lastRefreshAt = new Date().toISOString();
@@ -224,10 +226,15 @@ export class CopilotAgentHostSource implements SessionSource {
     if (inFlight) return inFlight;
     const session = this.sessions.get(id);
     const eventsPath = session?.sourcePaths.events;
-    if (!session || !eventsPath) return undefined;
+    if (!session) return undefined;
 
+    const usage = this.usageBySession.get(id) ?? [];
+    const storedTurns = this.turnsBySession.get(id) ?? [];
+    const eventDetails = eventsPath
+      ? this.eventReader.readDetails(eventsPath, usage)
+      : Promise.resolve(createStoredDetails(session, storedTurns, usage));
     const promise = Promise.all([
-      this.eventReader.readDetails(eventsPath, this.usageBySession.get(id) ?? []),
+      eventDetails,
       this.processLogReader.readMcpServers(id),
       this.customizationsReader.read(id)
     ])
@@ -301,6 +308,107 @@ export class CopilotAgentHostSource implements SessionSource {
 
 function shouldReadHeader(session: AgentHostStoreSession | undefined, workspacePath?: string): boolean {
   return !session || !workspacePath || !session.firstUserMessage;
+}
+
+function createStoredDetails(
+  session: NormalizedSession,
+  storedTurns: AgentHostStoredTurn[],
+  usage: AgentHostUsageRow[]
+): AgentHostEventDetails {
+  const turnRows = [...storedTurns].sort((left, right) => left.turnIndex - right.turnIndex);
+  const knownTurnIndexes = new Set(turnRows.map((turn) => turn.turnIndex));
+  for (const row of usage) {
+    if (row.turnIndex !== undefined) knownTurnIndexes.add(row.turnIndex);
+  }
+  for (const turnIndex of [...knownTurnIndexes].sort((left, right) => left - right)) {
+    if (!turnRows.some((turn) => turn.turnIndex === turnIndex)) turnRows.push({ turnIndex });
+  }
+  turnRows.sort((left, right) => left.turnIndex - right.turnIndex);
+
+  const turns = turnRows.map((storedTurn, index) => {
+    const turnUsage = usage.filter((row) =>
+      row.turnIndex === storedTurn.turnIndex
+      || (row.turnIndex === undefined && index === 0)
+    );
+    return createStoredTurn(storedTurn, index, turnUsage, session.updatedAt);
+  });
+  const latestUsage = createUsageContextSnapshot(usage);
+  const model = latestUsage?.model;
+  const conversationChars = turns.reduce((sum, turn) => sum + (turn.userMessage?.length ?? 0), 0);
+
+  return {
+    turns,
+    overview: {
+      skills: [],
+      skillsAvailability: 'unavailable',
+      agents: [],
+      agentsAvailability: 'unavailable',
+      userInstructions: [],
+      attachments: [],
+      tools: [],
+      toolsAvailability: 'unavailable',
+      contextSizes: {
+        systemPromptTotalBytes: 0,
+        systemPromptSkillsBytes: 0,
+        systemPromptAgentsBytes: 0,
+        systemPromptAttachmentsBytes: 0,
+        userPromptBytes: turns.reduce((sum, turn) => sum + Buffer.byteLength(turn.userMessage ?? '', 'utf8'), 0),
+        systemPromptChars: 0,
+        userInstructionsChars: 0,
+        agentDefinitionsChars: 0,
+        skillDefinitionsChars: 0,
+        toolDefinitionsChars: 0,
+        mcpDefinitionsChars: 0,
+        conversationChars,
+        otherChars: 0,
+        model
+      },
+      finalContext: latestUsage
+    },
+    tools: [],
+    agents: [],
+    messageCount: session.messageCount,
+    userTurnCount: turns.filter((turn) => Boolean(turn.userMessage)).length,
+    firstUserMessage: session.firstUserMessage,
+    warnings: ['Detailed event stream is unavailable; turns reconstructed from session store'],
+    instructionBlocks: []
+  };
+}
+
+function createStoredTurn(
+  stored: AgentHostStoredTurn,
+  index: number,
+  usage: AgentHostUsageRow[],
+  fallbackTimestamp: string
+): TurnInfo {
+  const models = [...new Set(usage.map((row) => row.model))].sort();
+  const agentTurns: AgentTurnInfo[] = usage.map((row, requestIndex) => ({
+    index: requestIndex,
+    model: row.model,
+    reasoningEffort: row.reasoningEffort,
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens,
+    cachedTokens: row.cachedTokens,
+    aiCredits: row.nanoAiu > 0 ? row.nanoAiu / 1_000_000_000 : undefined,
+    timestamp: row.timestamp ?? stored.timestamp ?? fallbackTimestamp,
+    toolCalls: []
+  }));
+  return {
+    index,
+    userMessage: stored.userMessage,
+    timestamp: stored.timestamp ?? usage[0]?.timestamp ?? fallbackTimestamp,
+    models,
+    inputTokens: usage.reduce((sum, row) => sum + row.inputTokens, 0),
+    outputTokens: usage.reduce((sum, row) => sum + row.outputTokens, 0),
+    cachedTokens: usage.reduce((sum, row) => sum + row.cachedTokens, 0),
+    aiCredits: usage.length
+      ? usage.reduce((sum, row) => sum + row.nanoAiu / 1_000_000_000, 0)
+      : undefined,
+    llmRequestCount: usage.length,
+    toolCalls: [],
+    turns: agentTurns,
+    hasBrowserContext: false
+  };
 }
 
 async function readWorkspaceMetadata(filePath: string): Promise<WorkspaceMetadata | undefined> {

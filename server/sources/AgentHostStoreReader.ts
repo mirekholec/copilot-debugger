@@ -18,6 +18,13 @@ export interface AgentHostUsageRow {
   timestamp?: string;
 }
 
+export interface AgentHostStoredTurn {
+  turnIndex: number;
+  userMessage?: string;
+  assistantResponse?: string;
+  timestamp?: string;
+}
+
 export interface AgentHostStoreSession {
   id: string;
   cwd?: string;
@@ -37,6 +44,7 @@ export interface AgentHostStoreSession {
 export interface AgentHostStoreSnapshot {
   sessions: Map<string, AgentHostStoreSession>;
   usageBySession: Map<string, AgentHostUsageRow[]>;
+  turnsBySession: Map<string, AgentHostStoredTurn[]>;
   schemaVersion?: number;
   warning?: string;
 }
@@ -83,7 +91,7 @@ export class AgentHostStoreReader {
     try {
       await fs.access(this.databasePath);
     } catch {
-      return { sessions: new Map(), usageBySession: new Map(), warning: 'Agent Host session-store.db is unavailable' };
+      return { sessions: new Map(), usageBySession: new Map(), turnsBySession: new Map(), warning: 'Agent Host session-store.db is unavailable' };
     }
 
     let lastError: unknown;
@@ -99,6 +107,7 @@ export class AgentHostStoreReader {
     return {
       sessions: new Map(),
       usageBySession: new Map(),
+      turnsBySession: new Map(),
       warning: `Agent Host session store could not be read: ${lastError instanceof Error ? lastError.message : String(lastError)}`
     };
   }
@@ -119,6 +128,7 @@ export class AgentHostStoreReader {
         : undefined;
       const sessions = new Map<string, AgentHostStoreSession>();
       const usageBySession = new Map<string, AgentHostUsageRow[]>();
+      const turnsBySession = new Map<string, AgentHostStoredTurn[]>();
 
       if (tables.has('sessions') && this.hasColumns(database, 'sessions', ['id'])) {
         const available = this.columnNames(database, 'sessions');
@@ -151,8 +161,16 @@ export class AgentHostStoreReader {
           .join(', ');
         const rows = database.prepare(`SELECT ${select} FROM turns ORDER BY session_id, turn_index`).all() as SqliteTurnRow[];
         for (const row of rows) {
-          const session = sessions.get(row.session_id);
-          if (!session) continue;
+          const storedTurns = turnsBySession.get(row.session_id) ?? [];
+          storedTurns.push({
+            turnIndex: row.turn_index,
+            userMessage: optionalString(row.user_message),
+            assistantResponse: optionalString(row.assistant_response),
+            timestamp: toIso(row.timestamp)
+          });
+          turnsBySession.set(row.session_id, storedTurns);
+          const session = sessions.get(row.session_id) ?? createEmptySession(row.session_id);
+          sessions.set(row.session_id, session);
           session.turnCount += 1;
           session.messageCount += Number(Boolean(row.user_message)) + Number(Boolean(row.assistant_response));
           session.firstUserMessage ??= optionalString(row.user_message)?.slice(0, 280);
@@ -201,7 +219,7 @@ export class AgentHostStoreReader {
         session.agents = [...new Set(usageRows.map((row) => row.agentId).filter((value): value is string => Boolean(value)))].sort();
       }
 
-      return { sessions, usageBySession, schemaVersion };
+      return { sessions, usageBySession, turnsBySession, schemaVersion };
     } finally {
       database.close();
     }
@@ -215,6 +233,16 @@ export class AgentHostStoreReader {
     const columns = this.columnNames(database, table);
     return required.every((column) => columns.has(column));
   }
+}
+
+function createEmptySession(id: string): AgentHostStoreSession {
+  return {
+    id,
+    turnCount: 0,
+    messageCount: 0,
+    cost: { models: [], perModel: [] },
+    agents: []
+  };
 }
 
 function aggregateUsage(rows: AgentHostUsageRow[]): SessionCostInfo {

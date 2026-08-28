@@ -148,6 +148,61 @@ test('event reader builds initial context from JSONL messages before the first a
   assert.equal(messages[0].sections?.reduce((sum, section) => sum + section.chars, 0), systemContent.length);
 });
 
+test('event reader keeps the latest context snapshot for the current context bar', async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-context-snapshots-'));
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  const eventPath = path.join(root, 'events.jsonl');
+  const events = [
+    { id: 'c1', timestamp: '2026-01-01T10:00:00.000Z', type: 'session.compaction_start', data: { systemTokens: 100, conversationTokens: 200, toolDefinitionsTokens: 50 } },
+    {
+      id: 's1',
+      timestamp: '2026-01-01T10:00:10.000Z',
+      type: 'session.shutdown',
+      data: { currentTokens: 900, systemTokens: 110, conversationTokens: 300, toolDefinitionsTokens: 490, model: 'latest-model' }
+    }
+  ];
+  await fs.writeFile(eventPath, `${events.map((event) => JSON.stringify(event)).join('\n')}\n`);
+
+  const details = await new AgentHostEventReader().readDetails(eventPath, []);
+
+  assert.deepEqual(details.overview.finalContext, {
+    currentTokens: 900,
+    systemTokens: 110,
+    conversationTokens: 300,
+    toolDefinitionsTokens: 490,
+    model: 'latest-model',
+    capturedAt: '2026-01-01T10:00:10.000Z',
+    source: 'event'
+  });
+  assert.equal(details.overview.contextSizes?.systemTokens, 100);
+  assert.equal(details.overview.contextSizes?.conversationTokens, 200);
+  assert.equal(details.overview.contextSizes?.toolDefinitionsTokens, 50);
+});
+
+test('event reader falls back to the latest main usage request for current context', async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-usage-context-'));
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  const eventPath = path.join(root, 'events.jsonl');
+  await fs.writeFile(eventPath, JSON.stringify({
+    type: 'user.message',
+    timestamp: '2026-01-01T10:00:00.000Z',
+    data: { content: 'Inspect usage' }
+  }) + '\n');
+
+  const details = await new AgentHostEventReader().readDetails(eventPath, [
+    { sessionId: 'fixture-session', model: 'first-model', inputTokens: 100, outputTokens: 10, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, nanoAiu: 0, timestamp: '2026-01-01T10:00:01.000Z' },
+    { sessionId: 'fixture-session', model: 'latest-model', inputTokens: 200, outputTokens: 20, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, nanoAiu: 0, timestamp: '2026-01-01T10:00:02.000Z' },
+    { sessionId: 'fixture-session', agentId: 'subagent', parentToolCallId: 'tool-1', model: 'sub-model', inputTokens: 900, outputTokens: 30, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, nanoAiu: 0, timestamp: '2026-01-01T10:00:03.000Z' }
+  ]);
+
+  assert.deepEqual(details.overview.finalContext, {
+    currentTokens: 200,
+    model: 'latest-model',
+    capturedAt: '2026-01-01T10:00:02.000Z',
+    source: 'usage'
+  });
+});
+
 test('event reader groups assistant iterations under user interactions', async (context) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-rounds-'));
   context.after(() => fs.rm(root, { recursive: true, force: true }));
@@ -243,6 +298,7 @@ test('store reader reads WAL-compatible catalog and aggregates usage once', asyn
   assert.deepEqual(session?.cost.models, ['fixture-model', 'fixture-sub-model']);
   assert.equal(session?.cost.perModel.find((model) => model.model === 'fixture-model')?.reasoningEffort, 'high');
   assert.equal(snapshot.usageBySession.get('fixture-session')?.[0].turnIndex, 1);
+  assert.equal(snapshot.turnsBySession.get('fixture-session')?.[0].userMessage, 'Inspect the fixture');
 });
 
 test('process log reader returns MCP servers initialized for the session window', async (context) => {
@@ -343,6 +399,28 @@ test('Agent Host source discovers directory and root JSONL generations lazily', 
   assert.deepEqual((await source.getSessionOverview('fixture-session'))?.agents.map((agent) => agent.name), ['fixture-agent']);
   assert.equal(source.getSession('root-session')?.hasDetailedEvents, true);
   assert.equal(source.getSession('empty-session'), undefined);
+});
+
+test('Agent Host source reconstructs stored turns when the event stream is unavailable', async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-store-only-'));
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.mkdir(path.join(root, 'session-state'), { recursive: true });
+  createFixtureDatabase(path.join(root, 'session-store.db'));
+
+  const source = new CopilotAgentHostSource({ agentHostRoot: root, pollIntervalMs: 3_600_000 });
+  context.after(() => source.stop());
+
+  await source.start();
+  const turns = await source.getSessionTurns('fixture-session');
+  const overview = await source.getSessionOverview('fixture-session');
+
+  assert.equal(source.getSession('fixture-session')?.hasDetailedEvents, false);
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0].userMessage, 'Inspect the fixture');
+  assert.equal(turns[0].turns.length, 2);
+  assert.equal(turns[0].turns[0].inputTokens, 100);
+  assert.equal(overview?.finalContext?.currentTokens, 100);
+  assert.equal(overview?.finalContext?.source, 'usage');
 });
 
 test('Agent Host source adds model-invokable customizations to the initial context', async (context) => {

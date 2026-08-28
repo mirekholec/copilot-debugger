@@ -203,6 +203,16 @@ interface ContextSizes {
   toolDefinitionsTokens?: number;
 }
 
+interface ContextWindowSnapshot {
+  currentTokens?: number;
+  systemTokens?: number;
+  conversationTokens?: number;
+  toolDefinitionsTokens?: number;
+  model?: string;
+  capturedAt?: string;
+  source?: 'event' | 'usage';
+}
+
 interface SessionOverview {
   skills: SkillInfo[];
   skillsAvailability?: 'catalog' | 'unavailable';
@@ -217,6 +227,7 @@ interface SessionOverview {
   contextSizes?: ContextSizes;
   contextContent?: Partial<Record<ContextSectionKey, string>>;
   initialContextMessages?: InitialContextMessage[];
+  finalContext?: ContextWindowSnapshot;
 }
 
 type LoadState = 'loading' | 'ready' | 'error';
@@ -438,6 +449,27 @@ function AppInner() {
     }
   }
 
+  useEffect(() => {
+    if (!detailSessionId) return;
+    let cancelled = false;
+    const refreshOverview = async () => {
+      try {
+        const response = await fetch(`/api/sessions/${encodeURIComponent(detailSessionId)}/overview`);
+        if (!response.ok || cancelled) return;
+        setOverview((await response.json()) as SessionOverview);
+      } catch (caught) {
+        if (!cancelled) {
+          setError(caught instanceof Error ? caught.message : String(caught));
+        }
+      }
+    };
+    const interval = window.setInterval(() => void refreshOverview(), 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [detailSessionId]);
+
   function openDetail(id: string, updateUrl = true) {
     setDetailSessionId(id);
     setSelectedId(id);
@@ -627,7 +659,7 @@ function AppInner() {
           {turnsLoading ? (
             <StateMessage title="Loading turns" detail="Parsing JSONL log file…" />
           ) : turns && turns.length === 0 ? (
-            <StateMessage title="No turns found" detail="This session has no debug log or no user messages were recorded." />
+            <StateMessage title="No turns found" detail="This session has no event stream, stored turns, or recorded user messages." />
           ) : turns ? (
             <>
               <ToolPayloadAnalysis turns={turns} />
@@ -638,6 +670,7 @@ function AppInner() {
               </div>
             </>
           ) : null}
+          {overview && <CurrentContextPanel overview={overview} />}
         </section>
         <Footer />
       </main>
@@ -1266,7 +1299,7 @@ function TurnCard({ turn }: { turn: TurnInfo }) {
         <div className="turn-activity">
           {turn.turns.length > 0 ? (
             turn.turns.map((t) => (
-              <AgentTurnActivity key={t.index} turn={t} />
+              <AgentTurnActivity key={t.index} turn={t} showModel />
             ))
           ) : (
             turn.toolCalls.map((tc, i) => <ToolCallRow key={i} tc={tc} />)
@@ -1357,6 +1390,92 @@ function SessionOverviewPanel({ overview }: { overview: SessionOverview }) {
   return (
     <div className="session-overview">
       <InitialPromptBar sizes={overview.contextSizes} messages={overview.initialContextMessages} />
+    </div>
+  );
+}
+
+function CurrentContextPanel({ overview }: { overview: SessionOverview }) {
+  return (
+    <div className="session-overview session-overview--current">
+      <CurrentContextBar snapshot={overview.finalContext} fallbackModel={overview.contextSizes?.model} />
+    </div>
+  );
+}
+
+interface CurrentContextSegment {
+  key: 'system' | 'conversation' | 'tools' | 'other';
+  label: string;
+  tokens: number;
+}
+
+function CurrentContextBar({ snapshot, fallbackModel }: { snapshot?: ContextWindowSnapshot; fallbackModel?: string }) {
+  const segments: CurrentContextSegment[] = [];
+  if (snapshot?.systemTokens !== undefined && snapshot.systemTokens > 0) {
+    segments.push({ key: 'system', label: 'System prompt', tokens: snapshot.systemTokens });
+  }
+  if (snapshot?.conversationTokens !== undefined && snapshot.conversationTokens > 0) {
+    segments.push({ key: 'conversation', label: 'Conversation', tokens: snapshot.conversationTokens });
+  }
+  if (snapshot?.toolDefinitionsTokens !== undefined && snapshot.toolDefinitionsTokens > 0) {
+    segments.push({ key: 'tools', label: 'Tool definitions', tokens: snapshot.toolDefinitionsTokens });
+  }
+
+  const knownTokens = segments.reduce((sum, segment) => sum + segment.tokens, 0);
+  const totalTokens = snapshot?.currentTokens !== undefined ? Math.max(snapshot.currentTokens, knownTokens) : knownTokens;
+  const uncategorizedTokens = snapshot?.currentTokens !== undefined ? Math.max(0, snapshot.currentTokens - knownTokens) : 0;
+  if (uncategorizedTokens > 0 || (segments.length === 0 && totalTokens > 0)) {
+    segments.push({
+      key: 'other',
+      label: snapshot?.source === 'usage' ? 'Latest request' : 'Uncategorized',
+      tokens: uncategorizedTokens || totalTokens
+    });
+  }
+
+  const pct = (value: number) => totalTokens > 0 ? `${(value / totalTokens) * 100}%` : '0%';
+  const snapshotLabel = snapshot?.currentTokens !== undefined
+    ? `${formatNumber(snapshot.currentTokens)} tokens`
+    : totalTokens > 0
+      ? `${formatNumber(totalTokens)} tokens`
+      : 'Snapshot unavailable';
+  const snapshotTitle = snapshot?.source === 'usage'
+    ? `Current total from the latest persisted usage request${snapshot.capturedAt ? `: ${formatDateTime(snapshot.capturedAt)}` : ''}. Category breakdown is unavailable.`
+    : snapshot?.capturedAt
+      ? `Last context snapshot: ${formatDateTime(snapshot.capturedAt)}`
+      : undefined;
+
+  return (
+    <div className="ctx-window ctx-window--current">
+      <div className="ctx-window-header">
+        <span className="ctx-window-label">Context window · current</span>
+        {(snapshot?.model ?? fallbackModel) && <span className="ctx-window-model">{snapshot?.model ?? fallbackModel}</span>}
+        <span className="ctx-window-usage" title={snapshotTitle}>
+          {snapshotLabel}
+        </span>
+      </div>
+      {segments.length > 0 ? (
+        <>
+          <div className="ctx-bar" role="img" aria-label={`Current context: ${snapshotLabel}`}>
+            {segments.map((segment) => (
+              <div
+                key={segment.key}
+                className={`ctx-final-segment ctx-seg--${segment.key}`}
+                style={{ width: pct(segment.tokens) }}
+                title={`${segment.label}: ${formatNumber(segment.tokens)} tokens`}
+              />
+            ))}
+          </div>
+          <div className="ctx-legend" aria-label="Current context breakdown">
+            {segments.map((segment) => (
+              <div key={segment.key} className={`ctx-legend-item ctx-legend-item--${segment.key}`}>
+                <span className="ctx-legend-dot" />
+                {segment.label} <span className="ctx-legend-val">{formatNumber(segment.tokens)}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="ctx-window-empty">No persisted context snapshot is available for this session yet.</div>
+      )}
     </div>
   );
 }

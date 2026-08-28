@@ -75,7 +75,7 @@ app.get('/api/sessions/:id/overview', async (request, response) => {
 
   const overview = await source.getSessionOverview(request.params.id);
   if (!overview) {
-    response.status(404).json({ error: 'No overview data available (debug log required)' });
+    response.status(404).json({ error: 'No overview data available' });
     return;
   }
 

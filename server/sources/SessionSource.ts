@@ -203,6 +203,16 @@ export interface ContextSizes {
   toolDefinitionsTokens?: number;
 }
 
+export interface ContextWindowSnapshot {
+  currentTokens?: number;
+  systemTokens?: number;
+  conversationTokens?: number;
+  toolDefinitionsTokens?: number;
+  model?: string;
+  capturedAt?: string;
+  source?: 'event' | 'usage';
+}
+
 export interface SessionOverview {
   skills: SkillInfo[];
   skillsAvailability?: 'catalog' | 'unavailable';
@@ -217,6 +227,7 @@ export interface SessionOverview {
   contextSizes?: ContextSizes;
   contextContent?: Partial<Record<ContextSectionKey, string>>;
   initialContextMessages?: InitialContextMessage[];
+  finalContext?: ContextWindowSnapshot;
 }
 
 export interface SessionSource {

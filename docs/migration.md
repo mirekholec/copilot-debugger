@@ -141,7 +141,7 @@ V pozorovaném vzorku má `session.start.data.version` hodnotu `1`. Reader ji m�
 | `subagent.completed` | `toolCallId`, `agentName`, `model`, `totalToolCalls`, `totalTokens`, `durationMs` | Souhrn subagenta |
 | `system.message` | `role`, `content`, `interactionId` | Celý system prompt pro context overview |
 | `session.usage_checkpoint` | kumulativní `totalNanoAiu`, model cache | Nouzový fallback ceny, ne per-request usage |
-| `session.compaction_start` | `systemTokens`, `conversationTokens`, `toolDefinitionsTokens` | Context breakdown před kompakcí |
+| `session.compaction_start` / `session.shutdown` | `currentTokens`, `systemTokens`, `conversationTokens`, `toolDefinitionsTokens` | Context breakdown snapshot; poslední dostupný snapshot je `finalContext` |
 | `session.compaction_complete` | tokeny před/po, checkpoint, usage kompakce | Samostatná compaction událost a diagnostika |
 | `session.binary_asset` | `assetId`, MIME, `byteLength`, base64 `data` | Binární přílohy; při listování přeskočit payload |
 | `session.handoff` | source/remote session ID, repo, summary | Vazba cloud-to-local |
@@ -240,7 +240,7 @@ Sestavení kola:
 7. DB usage řádky připojit podle normalizovaného `turn_index`, timestampu a případně `parent_tool_call_id`.
 8. Subagent vytvořit z `subagent.started/completed`; jeho usage je v DB přes `agent_id` a `parent_tool_call_id`, nikoliv v samostatném child JSONL.
 
-Na rozdíl od starých debug logů jsou subagenti součástí stejného streamu. `parseSubagentFiles()` proto pro nový source nebude potřeba.
+Na rozdíl od starých debug logů jsou subagenti součástí stejného streamu. `parseSubagentFiles()` proto pro nový source nebude potřeba. Pokud event stream chybí, lze top-level turns a jejich uložené texty rekonstruovat z tabulky `turns`; dostupné usage requesty se připojí jako interní modelové turns.
 
 ### `SessionOverview`
 
@@ -253,10 +253,12 @@ Na rozdíl od starých debug logů jsou subagenti součástí stejného streamu.
 | Použité tools | Ano: execution/external tool eventy |
 | Definice všech připojených tools | Neprokázáno jako samostatný perzistentní payload |
 | Velikost tool definitions | Částečně: `session.compaction_start.toolDefinitionsTokens`, ne přesné JSON bytes |
-| Context token breakdown | Ano při kompakci: system/conversation/tool definitions tokens |
+| Context token breakdown | Přesný breakdown při kompakci nebo shutdownu: system/conversation/tool definitions tokens; UI zobrazuje první snapshot nahoře a poslední snapshot dole. Pokud explicitní snapshot chybí, spodní proužek použije poslední hlavní `assistant_usage_events.input_tokens` jako aktuální celkový počet bez falešného rozdělení do kategorií |
 | Max context window | V perzistentních datech není spolehlivě přítomen; živě jej nabízí SDK usage event |
 
 UI nesmí zaměnit „použité tools“ za „všechny připojené tools“. Pokud nejsou definice dostupné, `connectedSessionCount`, descriptions, deferred flags a schema size musí být označené jako nedostupné, nikoliv dopočítané z použití.
+
+Při absenci `events.jsonl` se detail session nesmí zahodit, pokud jsou v `session-store.db` uložené turns. UI v takovém případě zobrazí rekonstruované user/assistant texty, dostupné usage requesty a varování o nedostupném detailním event streamu.
 
 Pro byte metriky používat UTF-8 `Buffer.byteLength()`, ne JavaScript `string.length`.
 

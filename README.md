@@ -45,7 +45,9 @@ Copilot Debugger reads the shared Copilot Agent Host session store and shows it 
 
 It scans Agent Host storage, normalizes sessions, and displays the context inventory separately from runtime tool usage.
 
-For sessions that persist the required source text, the initial context is split into system prompt, user instructions, agent, skill, tool and MCP definitions, conversation, and other attached context. Each segment can be opened to inspect its contents. Missing catalogs or definitions are shown as unavailable instead of being inferred from runtime calls.
+For sessions that persist the required source text, the initial context is split into system prompt, user instructions, agent, skill, tool and MCP definitions, conversation, and other attached context. Each segment can be opened to inspect its contents. Missing catalogs or definitions are shown as unavailable instead of being inferred from runtime calls. The detail view also shows the latest context-window state below the conversation: an explicit compaction/shutdown snapshot includes its category breakdown, while sessions without one use the latest persisted main request total.
+
+If the event stream is unavailable but `session-store.db` contains `turns`, the detail view reconstructs those user/assistant turns and marks the missing event detail in the session warnings.
 
 **Privacy:** The app does not send your data anywhere. It reads files from your machine and serves the UI locally. It does not call GitHub, Microsoft, Copilot, or any external analytics API.
 
@@ -137,7 +139,7 @@ Main stack:
 - Node.js + Express backend in `server/`
 - REST API under `/api/*`
 - `CopilotAgentHostSource` reads only the current Agent Host storage model
-- Usage comes from read-only SQLite; detailed turns and the initial context inventory come from lazy JSONL parsing
+- Usage comes from read-only SQLite; detailed turns and the initial context inventory come from lazy JSONL parsing, with stored SQLite turns as a fallback when the event stream is missing
 - Session-scoped instructions, agents, and skills are enriched from VS Code Agent Host customization snapshots
 - Initialized MCP servers come from the matching Agent Host process lifecycle log
 

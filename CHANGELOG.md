@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Show the latest persisted context-window token snapshot below the conversation while keeping the initial context bar at the top.
+- Fall back to the latest main usage request when no explicit context snapshot was persisted, without inventing a category breakdown.
+- Reconstruct stored conversation turns from SQLite when a session has no event stream.
+
 ## [0.2.2] - 2026-08-19
 
 ### Added
