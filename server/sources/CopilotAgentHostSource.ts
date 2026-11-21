@@ -5,7 +5,7 @@ import chokidar, { type FSWatcher } from 'chokidar';
 import fg from 'fast-glob';
 import { parse as parseYaml } from 'yaml';
 import { AgentHostCustomizationsReader } from './AgentHostCustomizationsReader.js';
-import { AgentHostEventReader, createUsageContextSnapshot, type AgentHostEventDetails, type AgentHostEventHeader } from './AgentHostEventReader.js';
+import { AgentHostEventReader, createUsageContextSnapshot, isSlashCommand, type AgentHostEventDetails, type AgentHostEventHeader } from './AgentHostEventReader.js';
 import { AgentHostProcessLogReader } from './AgentHostProcessLogReader.js';
 import { AgentHostStoreReader, type AgentHostStoredTurn, type AgentHostStoreSession, type AgentHostStoreSnapshot, type AgentHostUsageRow } from './AgentHostStoreReader.js';
 import type { AgentInfo, AgentTurnInfo, NormalizedSession, SessionSource, SessionSourceSnapshot, TurnInfo, SessionOverview } from './SessionSource.js';
@@ -119,7 +119,10 @@ export class CopilotAgentHostSource implements SessionSource {
             : Promise.resolve({} as AgentHostEventHeader)
         ]);
         const normalized = await this.normalizeSession(id, sessionFiles, store, workspace, header);
-        if (!isEmptySession(normalized)) next.set(normalized.id, normalized);
+        const storedTurns = store.turnsBySession.get(normalized.id) ?? store.turnsBySession.get(id) ?? [];
+        if (!isEmptySession(normalized) && !isHarnessOnlySession(normalized, header, storedTurns)) {
+          next.set(normalized.id, normalized);
+        }
       }
 
       this.sessions = next;
@@ -307,7 +310,24 @@ export class CopilotAgentHostSource implements SessionSource {
 }
 
 function shouldReadHeader(session: AgentHostStoreSession | undefined, workspacePath?: string): boolean {
-  return !session || !workspacePath || !session.firstUserMessage;
+  return !session?.cost.requestCount || !workspacePath || !session.firstUserMessage;
+}
+
+function isHarnessOnlySession(
+  session: NormalizedSession,
+  header: AgentHostEventHeader,
+  storedTurns: AgentHostStoredTurn[]
+): boolean {
+  if (session.cost.requestCount || storedTurns.some((turn) => turn.assistantResponse)) return false;
+
+  if (session.sourcePaths.events) {
+    return header.commandOnly === true && storedTurns.every((turn) => isSlashCommand(turn.userMessage));
+  }
+
+  // VS Code can persist /env as a catalog entry without writing a turn or an event log.
+  return session.clientName === 'vscode-agent-host'
+    && session.firstUserMessage?.trim() === '/env'
+    && storedTurns.length === 0;
 }
 
 function createStoredDetails(

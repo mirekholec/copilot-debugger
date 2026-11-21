@@ -213,6 +213,12 @@ export interface ContextWindowSnapshot {
   source?: 'event' | 'usage';
 }
 
+export interface CurrentContextDetail {
+  key: 'tools' | 'system' | 'agents' | 'skills' | 'instructions' | 'conversation';
+  label: string;
+  content: string;
+}
+
 export interface SessionOverview {
   skills: SkillInfo[];
   skillsAvailability?: 'catalog' | 'unavailable';
@@ -228,6 +234,7 @@ export interface SessionOverview {
   contextContent?: Partial<Record<ContextSectionKey, string>>;
   initialContextMessages?: InitialContextMessage[];
   finalContext?: ContextWindowSnapshot;
+  currentContextDetails?: CurrentContextDetail[];
 }
 
 export interface SessionSource {

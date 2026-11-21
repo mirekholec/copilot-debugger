@@ -1,58 +1,25 @@
-import { Calendar, ChevronDown, ChevronRight, Clock3, Coins, ExternalLink, Filter, PanelsTopLeft, RefreshCw, Search, Settings as SettingsIcon, Terminal, X } from 'lucide-react';
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-
-interface SourceFileInfo {
-  transcript?: string;
-  debugLog?: string;
-  events?: string;
-  workspaceMetadata?: string;
-  sessionStore?: string;
-  customizations?: string;
-}
-
-interface ModelCostInfo {
-  model: string;
-  reasoningEffort?: string;
-  aiCredits?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-  cachedTokens?: number;
-  requestCount?: number;
-}
-
-interface ModelAggregateRow {
-  model: string;
-  aiCredits: number;
-  inputTokens: number;
-  outputTokens: number;
-  cachedTokens: number;
-  requestCount: number;
-  sessionCount: number;
-}
+import { ArrowLeft, ChevronDown, ChevronRight, Clock3, Coins, Filter, RefreshCw, Search } from 'lucide-react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { ContextContent } from './ContextContent';
 
 interface NormalizedSession {
   id: string;
   workspaceStorageId: string;
   workspaceName?: string;
-  sourcePaths: SourceFileInfo;
   sourceKind: 'copilot-agent-host';
   clientName?: string;
   repository?: string;
-  branch?: string;
   dataCompleteness?: {
     hasEvents: boolean;
     hasWorkspaceMetadata: boolean;
     hasUsageData: boolean;
     warnings: string[];
   };
-  startTime?: string;
   updatedAt: string;
   producer: string;
   copilotVersion?: string;
   vscodeVersion?: string;
   firstUserMessage?: string;
-  messageCount: number;
-  userTurnCount: number;
   agents: string[];
   tools: string[];
   hasDebugLog: boolean;
@@ -66,7 +33,6 @@ interface NormalizedSession {
     cachedTokens?: number;
     requestCount?: number;
     models: string[];
-    perModel: ModelCostInfo[];
   };
 }
 
@@ -213,6 +179,12 @@ interface ContextWindowSnapshot {
   source?: 'event' | 'usage';
 }
 
+interface CurrentContextDetail {
+  key: 'tools' | 'system' | 'agents' | 'skills' | 'instructions' | 'conversation';
+  label: string;
+  content: string;
+}
+
 interface SessionOverview {
   skills: SkillInfo[];
   skillsAvailability?: 'catalog' | 'unavailable';
@@ -228,13 +200,10 @@ interface SessionOverview {
   contextContent?: Partial<Record<ContextSectionKey, string>>;
   initialContextMessages?: InitialContextMessage[];
   finalContext?: ContextWindowSnapshot;
+  currentContextDetails?: CurrentContextDetail[];
 }
 
-type LoadState = 'loading' | 'ready' | 'error';
-
 const SESSION_ROUTE_PREFIX = '/sessions/';
-
-type AppPage = 'sessions' | 'models' | 'settings';
 
 function toLocalDateInput(date: Date): string {
   const year = date.getFullYear();
@@ -275,75 +244,11 @@ function loadStoredFilters(): StoredFilters {
   }
 }
 
-const SETTINGS_STORAGE_KEY = 'copilot-debugger.settings';
-const DEFAULT_RATE = 4.8;
-const DEFAULT_CURRENCY = 'Kč';
-
-interface AppSettings {
-  rate: number;
-  currency: string;
-}
-
-function loadStoredSettings(): AppSettings {
-  try {
-    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (!raw) return { rate: DEFAULT_RATE, currency: DEFAULT_CURRENCY };
-    const parsed = JSON.parse(raw) as Partial<AppSettings>;
-    return {
-      rate: typeof parsed.rate === 'number' && parsed.rate > 0 ? parsed.rate : DEFAULT_RATE,
-      currency: typeof parsed.currency === 'string' && parsed.currency.trim() ? parsed.currency : DEFAULT_CURRENCY
-    };
-  } catch {
-    return { rate: DEFAULT_RATE, currency: DEFAULT_CURRENCY };
-  }
-}
-
-const SettingsContext = createContext<{
-  rate: number;
-  currency: string;
-  setRate: (rate: number) => void;
-  setCurrency: (currency: string) => void;
-} | null>(null);
-
-function useSettings() {
-  const ctx = useContext(SettingsContext);
-  if (!ctx) throw new Error('useSettings must be used within SettingsProvider');
-  return ctx;
-}
-
-function SettingsProvider({ children }: { children: ReactNode }) {
-  const [settings, setSettings] = useState<AppSettings>(() => loadStoredSettings());
-
-  function persist(next: AppSettings) {
-    setSettings(next);
-    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(next));
-  }
-
-  return (
-    <SettingsContext.Provider
-      value={{
-        rate: settings.rate,
-        currency: settings.currency,
-        setRate: (rate) => persist({ ...settings, rate }),
-        setCurrency: (currency) => persist({ ...settings, currency })
-      }}
-    >
-      {children}
-    </SettingsContext.Provider>
-  );
-}
-
 function getRouteSessionId() {
   if (!window.location.pathname.startsWith(SESSION_ROUTE_PREFIX)) return undefined;
   const encodedId = window.location.pathname.slice(SESSION_ROUTE_PREFIX.length);
   if (!encodedId) return undefined;
   return decodeURIComponent(encodedId);
-}
-
-function getRoutePage(): AppPage {
-  if (window.location.pathname.startsWith('/models')) return 'models';
-  if (window.location.pathname.startsWith('/settings')) return 'settings';
-  return 'sessions';
 }
 
 function sessionUrl(id: string) {
@@ -366,25 +271,14 @@ function formatInstructionPath(value: string) {
 }
 
 export default function App() {
-  return (
-    <SettingsProvider>
-      <AppInner />
-    </SettingsProvider>
-  );
-}
-
-function AppInner() {
-  const { rate, currency } = useSettings();
   const [sessions, setSessions] = useState<NormalizedSession[]>([]);
-  const [status, setStatus] = useState<LoadState>('loading');
   const [error, setError] = useState<string>();
   const [query, setQuery] = useState('');
   const [workspaceFilter, setWorkspaceFilter] = useState(() => loadStoredFilters().workspaceFilter);
-  const [page, setPage] = useState<AppPage>(() => getRoutePage());
   const [detailSessionId, setDetailSessionId] = useState<string | undefined>(() => getRouteSessionId());
   const [turns, setTurns] = useState<TurnInfo[]>();
   const [turnsLoading, setTurnsLoading] = useState(false);
-  const [selectedId, setSelectedId] = useState<string>();
+  const [detailError, setDetailError] = useState<string>();
   const [overview, setOverview] = useState<SessionOverview | null>();
   const [dateFrom, setDateFrom] = useState(() => loadStoredFilters().dateFrom);
   const [dateTo, setDateTo] = useState(() => loadStoredFilters().dateTo);
@@ -413,7 +307,6 @@ function AppInner() {
       setApiConnecting(false);
       setSessions(payload.sessions);
       setError(payload.error);
-      setStatus(payload.error ? 'error' : 'ready');
     } catch (caught) {
       if (!hasConnectedRef.current) {
         // API is still starting up (e.g. scanning storage before it opens its port).
@@ -421,99 +314,88 @@ function AppInner() {
         window.setTimeout(() => void loadSessions(), 500);
         return;
       }
-      setStatus('error');
       setError(caught instanceof Error ? caught.message : String(caught));
     }
   }
 
-  async function loadDetail(id: string) {
-    setTurns(undefined);
-    setOverview(null);
-    setTurnsLoading(true);
-    try {
-      const [turnsRes, overviewRes] = await Promise.all([
-        fetch(`/api/sessions/${encodeURIComponent(id)}/turns`),
-        fetch(`/api/sessions/${encodeURIComponent(id)}/overview`)
-      ]);
-      if (!turnsRes.ok) throw new Error(`API returned ${turnsRes.status}`);
-      const payload = (await turnsRes.json()) as { turns: TurnInfo[] };
-      setTurns(payload.turns);
-      if (overviewRes.ok) {
-        const ov = (await overviewRes.json()) as SessionOverview;
-        setOverview(ov);
-      }
-    } catch {
-      setTurns([]);
-    } finally {
-      setTurnsLoading(false);
-    }
-  }
-
   useEffect(() => {
-    if (!detailSessionId) return;
-    let cancelled = false;
-    const refreshOverview = async () => {
+    if (!detailSessionId || apiConnecting) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    const url = `/api/sessions/${encodeURIComponent(detailSessionId)}`;
+    setTurns(undefined);
+    setOverview(undefined);
+    setDetailError(undefined);
+    setTurnsLoading(true);
+
+    async function refreshOverview() {
       try {
-        const response = await fetch(`/api/sessions/${encodeURIComponent(detailSessionId)}/overview`);
-        if (!response.ok || cancelled) return;
-        setOverview((await response.json()) as SessionOverview);
-      } catch (caught) {
-        if (!cancelled) {
-          setError(caught instanceof Error ? caught.message : String(caught));
-        }
+        const response = await fetch(`${url}/overview`, { signal });
+        if (!response.ok) return;
+        const payload = (await response.json()) as SessionOverview;
+        if (!signal.aborted) setOverview(payload);
+      } catch {
+        // The next poll can retry unavailable overview data.
       }
-    };
+    }
+
+    async function fetchTurns() {
+      try {
+        const response = await fetch(`${url}/turns`, { signal });
+        if (!response.ok) {
+          throw new Error(response.status === 404 ? 'Session not found.' : `API returned ${response.status}`);
+        }
+        const payload = (await response.json()) as { turns: TurnInfo[] };
+        if (!signal.aborted) setTurns(payload.turns);
+      } catch (caught) {
+        if (!signal.aborted) setDetailError(caught instanceof Error ? caught.message : String(caught));
+      } finally {
+        if (!signal.aborted) setTurnsLoading(false);
+      }
+    }
+
+    void fetchTurns();
+    void refreshOverview();
     const interval = window.setInterval(() => void refreshOverview(), 5_000);
     return () => {
-      cancelled = true;
+      controller.abort();
       window.clearInterval(interval);
     };
-  }, [detailSessionId]);
+  }, [detailSessionId, apiConnecting]);
 
-  function openDetail(id: string, updateUrl = true) {
+  function openDetail(id: string) {
     setDetailSessionId(id);
-    setSelectedId(id);
-    void loadDetail(id);
-    if (updateUrl) {
-      window.history.pushState(null, '', sessionUrl(id));
-    }
+    window.history.pushState(null, '', sessionUrl(id));
+    window.scrollTo(0, 0);
   }
 
-  function navigateToPage(target: AppPage) {
-    if (target === page && !detailSessionId) return;
-    setPage(target);
+  function navigateToSessions() {
+    if (window.location.pathname === '/') return;
+    window.history.pushState(null, '', '/');
     setDetailSessionId(undefined);
     setTurns(undefined);
     setOverview(undefined);
-    window.history.pushState(null, '', target === 'models' ? '/models' : target === 'settings' ? '/settings' : '/');
+    window.scrollTo(0, 0);
   }
 
   useEffect(() => {
     void loadSessions();
-    const routeSessionId = getRouteSessionId();
-    if (routeSessionId) {
-      openDetail(routeSessionId, false);
-    }
     const interval = window.setInterval(() => void loadSessions(), 5_000);
     return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
-    function handlePopState() {
-      setPage(getRoutePage());
-      const routeSessionId = getRouteSessionId();
-      if (routeSessionId) {
-        openDetail(routeSessionId, false);
-        return;
+    function syncRoute() {
+      const id = getRouteSessionId();
+      if (!id && window.location.pathname !== '/') {
+        window.history.replaceState(null, '', '/');
       }
-
-      setDetailSessionId(undefined);
-      setTurns(undefined);
-      setOverview(undefined);
+      setDetailSessionId(id);
     }
 
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    syncRoute();
+    window.addEventListener('popstate', syncRoute);
+    return () => window.removeEventListener('popstate', syncRoute);
   }, []);
 
   const workspaces = useMemo(() => {
@@ -554,75 +436,7 @@ function AppInner() {
     });
   }, [workspaceFilter, query, sessions, dateFrom, dateTo]);
 
-  const modelsPageSessions = useMemo(() => {
-    const fromDate = dateFrom ? new Date(dateFrom + 'T00:00:00') : null;
-    const toDate = dateTo ? new Date(dateTo + 'T23:59:59') : null;
-    return sessions.filter((session) => {
-      const updatedAt = new Date(session.updatedAt);
-      if (fromDate && updatedAt < fromDate) return false;
-      if (toDate && updatedAt > toDate) return false;
-      const sessionWorkspace = session.workspaceName ?? session.workspaceStorageId;
-      return workspaceFilter === 'all' || sessionWorkspace === workspaceFilter;
-    });
-  }, [sessions, dateFrom, dateTo, workspaceFilter]);
-
-  const modelRows = useMemo(() => {
-    const map = new Map<string, ModelAggregateRow>();
-    const ensure = (name: string) => {
-      let entry = map.get(name);
-      if (!entry) {
-        entry = { model: name, aiCredits: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, requestCount: 0, sessionCount: 0 };
-        map.set(name, entry);
-      }
-      return entry;
-    };
-    for (const session of modelsPageSessions) {
-      const usedModels = new Set(session.cost.models);
-      for (const modelCost of session.cost.perModel) {
-        usedModels.add(modelCost.model);
-        const entry = ensure(modelCost.model);
-        entry.aiCredits += modelCost.aiCredits ?? 0;
-        entry.inputTokens += modelCost.inputTokens ?? 0;
-        entry.outputTokens += modelCost.outputTokens ?? 0;
-        entry.cachedTokens += modelCost.cachedTokens ?? 0;
-        entry.requestCount += modelCost.requestCount ?? 0;
-      }
-      for (const modelName of usedModels) {
-        ensure(modelName).sessionCount += 1;
-      }
-    }
-    return [...map.values()].sort((a, b) => b.aiCredits - a.aiCredits || b.requestCount - a.requestCount || a.model.localeCompare(b.model));
-  }, [modelsPageSessions]);
-
-  const modelHighlights = useMemo(() => {
-    if (modelRows.length === 0) return undefined;
-    return {
-      mostUsed: [...modelRows].sort((a, b) => b.sessionCount - a.sessionCount || b.requestCount - a.requestCount)[0],
-      topAic: [...modelRows].sort((a, b) => b.aiCredits - a.aiCredits)[0],
-      topInput: [...modelRows].sort((a, b) => b.inputTokens - a.inputTokens)[0],
-      topOutput: [...modelRows].sort((a, b) => b.outputTokens - a.outputTokens)[0]
-    };
-  }, [modelRows]);
-
-  const modelTotals = useMemo(
-    () =>
-      modelRows.reduce(
-        (acc, row) => ({
-          requestCount: acc.requestCount + row.requestCount,
-          aiCredits: acc.aiCredits + row.aiCredits,
-          inputTokens: acc.inputTokens + row.inputTokens,
-          outputTokens: acc.outputTokens + row.outputTokens,
-          cachedTokens: acc.cachedTokens + row.cachedTokens
-        }),
-        { requestCount: 0, aiCredits: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0 }
-      ),
-    [modelRows]
-  );
-
-  const selectedSession = filteredSessions.find((session) => session.id === selectedId) ?? filteredSessions[0];
-  const selectedCost = selectedSession?.cost ?? { models: [], perModel: [] };
   const detailSession = sessions.find((s) => s.id === detailSessionId);
-  const filteredAiCredits = filteredSessions.reduce((sum, session) => sum + (session.cost.aiCredits ?? 0), 0);
 
   if (apiConnecting) {
     return (
@@ -638,26 +452,33 @@ function AppInner() {
   }
 
   if (detailSessionId) {
-    const detailCost = detailSession?.cost ?? { models: [], perModel: [] };
+    const aiCredits = detailSession?.cost.aiCredits;
+    const warnings = detailSession?.dataCompleteness?.warnings ?? [];
     return (
       <main className="app-shell">
-        <AppHeader
-          page={page}
-          onNavigate={navigateToPage}
-          costSummary={
+        <header className="session-heading">
+          <div className="session-heading-bar">
+            <button type="button" className="back-link" onClick={navigateToSessions} aria-label="Back to sessions">
+              <ArrowLeft size={15} aria-hidden="true" />
+              Sessions
+            </button>
+            <h1>{detailSession?.firstUserMessage || 'Session detail'}</h1>
             <div className="cost-summary-pill">
               <Coins size={14} aria-hidden="true" />
-              {detailCost.aiCredits !== undefined
-                ? <strong>{formatAic(detailCost.aiCredits)} AIC <span className="kc-price">({aicToKc(detailCost.aiCredits, rate)} {currency})</span></strong>
+              {aiCredits !== undefined
+                ? <strong>{formatAic(aiCredits)} AIC</strong>
                 : <span>No AIC data</span>}
             </div>
-          }
-        />
+          </div>
+          {warnings.length > 0 && <div className="completeness-warning">{warnings.join(' · ')}</div>}
+        </header>
 
         <section className="turns-area">
           {overview && <SessionOverviewPanel overview={overview} />}
           {turnsLoading ? (
             <StateMessage title="Loading turns" detail="Parsing JSONL log file…" />
+          ) : detailError ? (
+            <StateMessage title="Unable to load session" detail={detailError} />
           ) : turns && turns.length === 0 ? (
             <StateMessage title="No turns found" detail="This session has no event stream, stored turns, or recorded user messages." />
           ) : turns ? (
@@ -677,70 +498,19 @@ function AppInner() {
     );
   }
 
-  if (page === 'settings') {
-    return (
-      <main className="app-shell">
-        <AppHeader page={page} onNavigate={navigateToPage} />
-        <SettingsPage />
-        <Footer />
-      </main>
-    );
-  }
-
-  if (page === 'models') {
-    const modelsAiCredits = modelsPageSessions.reduce((sum, session) => sum + (session.cost.aiCredits ?? 0), 0);
-    return (
-      <main className="app-shell">
-        <AppHeader
-          page={page}
-          onNavigate={navigateToPage}
-          costSummary={
-            <div className="cost-summary-pill">
-              <Coins size={14} aria-hidden="true" />
-              <strong>{formatAic(modelsAiCredits)} AIC</strong> <span className="kc-price">({aicToKc(modelsAiCredits, rate)} {currency})</span>
-            </div>
-          }
-        />
-
-        {modelHighlights ? (
-          <section className="model-highlights" aria-label="Model usage highlights">
-            <div className="model-highlight-card">
-              <span className="model-highlight-label">Most Used</span>
-              <strong className="model-highlight-value">{modelHighlights.mostUsed.model}</strong>
-              <span className="model-highlight-meta">{formatNumber(modelHighlights.mostUsed.sessionCount)} sessions · {formatNumber(modelHighlights.mostUsed.requestCount)} req</span>
-            </div>
-            <div className="model-highlight-card">
-              <span className="model-highlight-label">Top AIC</span>
-              <strong className="model-highlight-value">{modelHighlights.topAic.model}</strong>
-              <span className="model-highlight-meta">{formatAic(modelHighlights.topAic.aiCredits)} AIC</span>
-            </div>
-            <div className="model-highlight-card">
-              <span className="model-highlight-label">Top Input Tokens</span>
-              <strong className="model-highlight-value">{modelHighlights.topInput.model}</strong>
-              <span className="model-highlight-meta">{formatNumber(modelHighlights.topInput.inputTokens)} in</span>
-            </div>
-            <div className="model-highlight-card">
-              <span className="model-highlight-label">Top Output Tokens</span>
-              <strong className="model-highlight-value">{modelHighlights.topOutput.model}</strong>
-              <span className="model-highlight-meta">{formatNumber(modelHighlights.topOutput.outputTokens)} out</span>
-            </div>
-          </section>
-        ) : null}
-
-        <section className="filters" aria-label="Model filters">
-          <label className="date-box">
-            <Calendar size={17} aria-hidden="true" />
-            <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} title="From date" />
-          </label>
-
-          <label className="date-box">
-            <Calendar size={17} aria-hidden="true" />
-            <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} title="To date" />
+  return (
+    <main className="app-shell">
+      <header className="list-toolbar">
+        <h1>Sessions <span>{formatNumber(filteredSessions.length)}</span></h1>
+        <div className="filters" role="group" aria-label="Session filters">
+          <label className="search-box">
+            <Search size={17} aria-hidden="true" />
+            <input type="search" aria-label="Search sessions" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sessions" />
           </label>
 
           <label className="select-box">
             <Filter size={17} aria-hidden="true" />
-            <select value={workspaceFilter} onChange={(event) => setWorkspaceFilter(event.target.value)}>
+            <select aria-label="Workspace" value={workspaceFilter} onChange={(event) => setWorkspaceFilter(event.target.value)}>
               <option value="all">All workspaces</option>
               {workspaces.map((ws) => (
                 <option key={ws} value={ws}>
@@ -750,383 +520,61 @@ function AppInner() {
             </select>
           </label>
 
-          <div className="meta-strip" aria-label="Filtered models summary">
-            <span className="meta-count">
-              <strong>{modelRows.length}</strong>
-              <span>models</span>
-            </span>
-          </div>
-        </section>
+          <label className="date-box">
+            <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} aria-label="From date" />
+          </label>
 
-        {error ? <div className="error-banner">{error}</div> : null}
-
-        <section className="models-table" role="region" aria-label="Model usage list">
-          {status === 'loading' ? <StateMessage title="Loading sessions" detail="Scanning local VS Code storage." /> : null}
-          {status !== 'loading' && modelRows.length === 0 ? (
-            <StateMessage title="No model data found" detail="No sessions with model usage match current filters." />
-          ) : null}
-          {modelRows.length > 0 ? (
-            <div className="models-table-grid">
-              <div className="models-row models-row--head">
-                <span>Model</span>
-                <span>Sessions</span>
-                <span>Requests</span>
-                <span>AIC</span>
-                <span>Price</span>
-                <span>Input</span>
-                <span>Output</span>
-                <span>Cached</span>
-              </div>
-              {modelRows.map((row) => (
-                <div key={row.model} className="models-row">
-                  <span className="models-row-name">{row.model}</span>
-                  <span>{formatNumber(row.sessionCount)}</span>
-                  <span>{formatNumber(row.requestCount)}</span>
-                  <span className="models-row-aic">{formatAic(row.aiCredits)}</span>
-                  <span className="models-row-price">{aicToKc(row.aiCredits, rate)} {currency}</span>
-                  <span>{formatNumber(row.inputTokens)}</span>
-                  <span>{formatNumber(row.outputTokens)}</span>
-                  <span>{formatNumber(row.cachedTokens)}</span>
-                </div>
-              ))}
-              <div className="models-row models-row--total">
-                <span className="models-row-name">Total</span>
-                <span>{formatNumber(modelsPageSessions.length)}</span>
-                <span>{formatNumber(modelTotals.requestCount)}</span>
-                <span className="models-row-aic">{formatAic(modelTotals.aiCredits)}</span>
-                <span className="models-row-price">{aicToKc(modelTotals.aiCredits, rate)} {currency}</span>
-                <span>{formatNumber(modelTotals.inputTokens)}</span>
-                <span>{formatNumber(modelTotals.outputTokens)}</span>
-                <span>{formatNumber(modelTotals.cachedTokens)}</span>
-              </div>
-            </div>
-          ) : null}
-        </section>
-        <Footer />
-      </main>
-    );
-  }
-
-  return (
-    <main className="app-shell">
-      <AppHeader
-        page={page}
-        onNavigate={navigateToPage}
-        costSummary={
-          <div className="cost-summary-pill">
-            <Coins size={14} aria-hidden="true" />
-            <strong>{formatAic(filteredAiCredits)} AIC</strong> <span className="kc-price">({aicToKc(filteredAiCredits, rate)} {currency})</span>
-          </div>
-        }
-      />
-
-      <section className="filters" aria-label="Session filters">
-        <label className="search-box">
-          <Search size={17} aria-hidden="true" />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sessions" />
-        </label>
-
-        <label className="date-box">
-          <Calendar size={17} aria-hidden="true" />
-          <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} title="From date" />
-        </label>
-
-        <label className="date-box">
-          <Calendar size={17} aria-hidden="true" />
-          <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} title="To date" />
-        </label>
-
-        <label className="select-box">
-          <Filter size={17} aria-hidden="true" />
-          <select value={workspaceFilter} onChange={(event) => setWorkspaceFilter(event.target.value)}>
-            <option value="all">All workspaces</option>
-            {workspaces.map((ws) => (
-              <option key={ws} value={ws}>
-                {ws.length > 25 ? ws.slice(0, 25) + '…' : ws}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <div className="meta-strip" aria-label="Filtered sessions summary">
-          <span className="meta-count">
-            <strong>{filteredSessions.length}</strong>
-            <span>sessions</span>
-          </span>
+          <label className="date-box">
+            <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} aria-label="To date" />
+          </label>
         </div>
-      </section>
+      </header>
 
-      {error ? <div className="error-banner">{error}</div> : null}
+      {error ? <div className="error-banner" role="alert">{error}</div> : null}
 
-      <section className="content-grid">
-        <div className="session-table" role="region" aria-label="Session list">
-          {status === 'loading' ? <StateMessage title="Loading sessions" detail="Scanning local VS Code storage." /> : null}
-          {status !== 'loading' && filteredSessions.length === 0 ? (
-            <StateMessage title="No sessions found" detail="Check the storage root or continue a Copilot Chat turn to create local artifacts." />
-          ) : null}
-
-          {filteredSessions.map((session) => (
-            <div
-              key={session.id}
-              role="button"
-              tabIndex={0}
-              className={`session-row ${selectedSession?.id === session.id ? 'selected' : ''} ${(session.cost.aiCredits ?? 0) <= 1 ? 'dim' : ''}`}
-              onClick={() => setSelectedId(session.id)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault();
-                  setSelectedId(session.id);
-                }
-              }}
-            >
-              <span className="summary-cell">
-                <span className="summary-text">
-                  <strong>{truncate(session.firstUserMessage ?? 'Untitled session', 60)}</strong>
-                  <small>{session.workspaceName ?? session.workspaceStorageId}</small>
-                </span>
-              </span>
-              <span>{formatDateTime(session.updatedAt)}</span>
-              <span className="stats-cell">
-                <span className="turns-badge">{session.userTurnCount}</span>
-                <span className="req-count">{session.cost.requestCount ?? '—'}</span>
-              </span>
-              <span className="aic-cell">
-                {session.cost.aiCredits !== undefined
-                  ? <><Coins size={13} aria-hidden="true" />{formatAic(session.cost.aiCredits)}</>
-                  : '—'}
-              </span>
-              <span className="source-cell">
-                <SessionSourceIcon session={session} onOpenDetail={() => void openDetail(session.id)} />
-              </span>
+      <section className="session-table" aria-label="Session list">
+        {filteredSessions.length === 0 ? (
+          <StateMessage
+            title="No sessions found"
+            detail={sessions.length ? 'Try a different search or date range.' : 'Continue a Copilot Chat turn to create a session.'}
+          />
+        ) : (
+          <>
+            <div className="session-columns" aria-hidden="true">
+              <span>Session</span>
+              <span>Updated</span>
+              <span>AI credits</span>
             </div>
-          ))}
-        </div>
-
-        <aside className="detail-panel" aria-label="Selected session metadata">
-          {selectedSession ? (
-            <>
-              <div className="detail-heading">
-                <h2>{selectedSession.firstUserMessage ?? selectedSession.id}</h2>
-              </div>
-
-              <dl>
-                <dt>Updated</dt>
-                <dd>{formatDateTime(selectedSession.updatedAt)}</dd>
-                <dt>Started</dt>
-                <dd>{selectedSession.startTime ? formatDateTime(selectedSession.startTime) : 'Unknown'}</dd>
-                <dt>Messages</dt>
-                <dd>{selectedSession.messageCount}</dd>
-                <dt>Source</dt>
-                <dd>Copilot Agent Host</dd>
-                <dt>Client</dt>
-                <dd>{selectedSession.clientName ?? 'Unknown'}</dd>
-                {selectedSession.repository ? <><dt>Repository</dt><dd>{selectedSession.repository}</dd></> : null}
-                {selectedSession.branch ? <><dt>Branch</dt><dd>{selectedSession.branch}</dd></> : null}
-              </dl>
-
-              {selectedSession.dataCompleteness?.warnings.length ? (
-                <div className="completeness-warning">{selectedSession.dataCompleteness.warnings.join(' · ')}</div>
-              ) : null}
-
-              <section className="cost-panel" aria-label="AI credit usage">
-                <div className="cost-heading">
-                  <Coins size={17} aria-hidden="true" />
-                  <h3>AI Credits</h3>
-                </div>
-                <div className="cost-total">
-                  {selectedCost.aiCredits === undefined ? 'Not reported' : <>{formatAic(selectedCost.aiCredits)} AIC <span className="kc-price">({aicToKc(selectedCost.aiCredits, rate)} {currency})</span></>}
-                </div>
-                <div className="cost-meta">
-                  {(selectedCost.inputTokens || selectedCost.outputTokens || selectedCost.cachedTokens) ? (
-                    <table className="token-table">
-                      <tbody>
-                        {selectedCost.inputTokens ? <tr><td>Input</td><td>{formatNumber(selectedCost.inputTokens)}</td></tr> : null}
-                        {selectedCost.outputTokens ? <tr><td>Output</td><td>{formatNumber(selectedCost.outputTokens)}</td></tr> : null}
-                        {selectedCost.cachedTokens ? <tr><td>Cached</td><td>{formatNumber(selectedCost.cachedTokens)}</td></tr> : null}
-                      </tbody>
-                    </table>
-                  ) : null}
-                  {selectedCost.models.length ? (
-                    <span className="cost-models">
-                      {selectedCost.models.map((model, index) => {
-                        const modelCost = selectedCost.perModel.find((entry) => entry.model === model);
-                        return (
-                        <span key={model}>
-                          {index > 0 ? ', ' : ''}{model}{modelCost?.reasoningEffort ? ` (${modelCost.reasoningEffort})` : ''}
-                        </span>
-                        );
-                      })}
+            <ul className="session-list" role="list">
+              {filteredSessions.map((session) => (
+                <li key={session.id}>
+                  <a
+                    className="session-row"
+                    href={sessionUrl(session.id)}
+                    onClick={(event) => {
+                      if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+                      event.preventDefault();
+                      openDetail(session.id);
+                    }}
+                  >
+                    <span className="session-title">
+                      <strong>{session.firstUserMessage || 'Untitled session'}</strong>
+                      <small>{session.workspaceName ?? session.workspaceStorageId}</small>
                     </span>
-                  ) : null}
-                </div>
-              </section>
-
-              <div className="path-stack">
-                {selectedSession.sourcePaths.transcript ? <PathLine label="Transcript" value={selectedSession.sourcePaths.transcript} /> : null}
-                {selectedSession.sourcePaths.debugLog ? <PathLine label="Debug log" value={selectedSession.sourcePaths.debugLog} /> : null}
-                {selectedSession.sourcePaths.events ? <PathLine label="Events" value={selectedSession.sourcePaths.events} /> : null}
-                {selectedSession.sourcePaths.workspaceMetadata ? <PathLine label="Workspace" value={selectedSession.sourcePaths.workspaceMetadata} /> : null}
-                {selectedSession.sourcePaths.sessionStore ? <PathLine label="Session store" value={selectedSession.sourcePaths.sessionStore} /> : null}
-                {selectedSession.sourcePaths.customizations ? <PathLine label="Customizations" value={selectedSession.sourcePaths.customizations} /> : null}
-              </div>
-            </>
-          ) : (
-            <StateMessage title="Select a session" detail="Click any session row to view turns and AI credit breakdown." />
-          )}
-        </aside>
+                    <time className="session-date" dateTime={session.updatedAt}>{formatDateTime(session.updatedAt)}</time>
+                    <span className="session-credits">
+                      {session.cost.aiCredits === undefined ? '—' : `${formatAic(session.cost.aiCredits)} AIC`}
+                    </span>
+                    <ChevronRight className="session-arrow" size={16} aria-hidden="true" />
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </section>
       <Footer />
     </main>
-  );
-}
-
-function SessionSourceIcon({ session, onOpenDetail }: { session: NormalizedSession; onOpenDetail: () => void }) {
-  const isCli = session.clientName === 'github/cli';
-  const label = `Agent Host · ${session.clientName ?? 'unknown client'}`;
-  const icon = isCli ? <Terminal size={17} aria-hidden="true" /> : <PanelsTopLeft size={17} aria-hidden="true" />;
-
-  if (!session.hasDetailedEvents) {
-    return <span className="source-icon" title={label} aria-label={label} role="img">{icon}</span>;
-  }
-
-  return (
-    <button
-      type="button"
-      className="source-icon source-icon--button"
-      onClick={(event) => {
-        event.stopPropagation();
-        onOpenDetail();
-      }}
-      title={label}
-      aria-label={`Open ${label} session detail`}
-    >
-      {icon}
-    </button>
-  );
-}
-
-function AppHeader({
-  page,
-  onNavigate,
-  costSummary
-}: {
-  page: AppPage;
-  onNavigate: (page: AppPage) => void;
-  costSummary?: ReactNode;
-}) {
-  return (
-    <section className="toolbar" aria-label="App header">
-      <div className="header-left">
-        <div className="title-block">
-          <div className="title-row">
-            <h1>
-              <a
-                className="title-home-link"
-                href="/"
-                onClick={(event) => {
-                  event.preventDefault();
-                  onNavigate('sessions');
-                }}
-              >
-                Copilot Debugger
-              </a>
-            </h1>
-          </div>
-        </div>
-
-        <nav className="main-nav" aria-label="Main navigation">
-          <button type="button" className={page === 'sessions' ? 'nav-link nav-link-active' : 'nav-link'} onClick={() => onNavigate('sessions')}>
-            Sessions
-          </button>
-          <button type="button" className={page === 'models' ? 'nav-link nav-link-active' : 'nav-link'} onClick={() => onNavigate('models')}>
-            Models
-          </button>
-          <button type="button" className={page === 'settings' ? 'nav-link nav-link-active' : 'nav-link'} onClick={() => onNavigate('settings')}>
-            Settings
-          </button>
-        </nav>
-      </div>
-
-      {costSummary ? <div className="toolbar-actions">{costSummary}</div> : null}
-    </section>
-  );
-}
-
-function SettingsPage() {
-  const { rate, currency, setRate, setCurrency } = useSettings();
-  const [rateInput, setRateInput] = useState(() => String(rate));
-  const [currencyInput, setCurrencyInput] = useState(currency);
-
-  function commitRate() {
-    const parsed = Number(rateInput.replace(',', '.'));
-    if (Number.isFinite(parsed) && parsed > 0) {
-      setRate(parsed);
-    } else {
-      setRateInput(String(rate));
-    }
-  }
-
-  function commitCurrency() {
-    const trimmed = currencyInput.trim();
-    if (trimmed) {
-      setCurrency(trimmed);
-    } else {
-      setCurrencyInput(currency);
-    }
-  }
-
-  return (
-    <section className="settings-page" aria-label="Settings">
-      <div className="settings-card">
-        <div className="settings-heading">
-          <SettingsIcon size={18} aria-hidden="true" />
-          <h2>Price Conversion Settings</h2>
-        </div>
-        <p className="settings-hint">The rate indicates how many AIC correspond to 1 unit of the selected currency (e.g. AIC / rate = price in currency).</p>
-
-        <label className="settings-field">
-          <span>Currency</span>
-          <input
-            type="text"
-            value={currencyInput}
-            onChange={(event) => setCurrencyInput(event.target.value)}
-            onBlur={commitCurrency}
-          />
-        </label>
-
-        <label className="settings-field">
-          <span>Rate (AIC per 1 {currencyInput || currency})</span>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            value={rateInput}
-            onChange={(event) => setRateInput(event.target.value)}
-            onBlur={commitRate}
-          />
-        </label>
-
-        <div className="settings-preview-row">
-          <div className="settings-preview">
-            Example: 1 AIC = {(1 / rate).toFixed(4)} {currency}
-            <br />
-            Example: 1 {currency} = {rate.toFixed(4)} AIC
-          </div>
-          <button
-            type="button"
-            className="settings-set-btn"
-            onClick={() => {
-              setCurrency('USD');
-              setCurrencyInput('USD');
-              setRate(100);
-              setRateInput('100');
-            }}
-          >
-            Set USD
-          </button>
-        </div>
-      </div>
-    </section>
   );
 }
 
@@ -1152,31 +600,16 @@ function Footer() {
   );
 }
 
-function ToolCallRow({
-  tc,
-  nested,
-  turnLabel,
-  showTurnColumn,
-  model
-}: {
-  tc: ToolCallInfo;
-  nested?: boolean;
-  turnLabel?: string;
-  showTurnColumn?: boolean;
-  model?: string;
-}) {
-  const hasSubagent = tc.name === 'runSubagent' && !!tc.subagentTurns && tc.subagentTurns.length > 0;
+function ToolCallRow({ tc }: { tc: ToolCallInfo }) {
+  const subagentTurns = tc.name === 'runSubagent' ? tc.subagentTurns : undefined;
 
   return (
-    <div className={hasSubagent ? 'activity-subagent-wrap activity-subagent-open' : 'activity-subagent-wrap'}>
-      <div className={nested ? 'activity-row activity-row-nested' : 'activity-row'}>
-        {showTurnColumn ? <span className="activity-label" aria-hidden={turnLabel ? undefined : true}>{turnLabel}</span> : null}
-        {model ? <span className="activity-turn-model">{model}</span> : null}
-        <span className="activity-label">tool</span>
-        <span className={tc.returnedTools?.length ? 'activity-value activity-value-search' : 'activity-value'}>
+    <div className="activity-tool">
+      <div className="activity-row">
+        <span className="activity-value">
           <span className="activity-tool-summary">
             <span className="activity-tool-name">{tc.name}</span>
-            {tc.detail ? <span className="activity-detail">{tc.detail}</span> : null}
+            {tc.detail ? <span className="activity-detail" title={tc.detail}>{tc.detail}</span> : null}
           </span>
           {tc.returnedTools?.length ? (
             <span className="activity-tool-results" title={tc.returnedTools.join(', ')}>
@@ -1184,60 +617,36 @@ function ToolCallRow({
             </span>
           ) : null}
         </span>
-        {hasSubagent && (
-          <span className="activity-subagent-chip">{tc.subagentName ?? 'subagent'} · {tc.subagentTurns!.length} turns</span>
-        )}
+        {subagentTurns?.length ? (
+          <span className="activity-subagent-label">{tc.subagentName ?? 'subagent'} · {subagentTurns.length} turns</span>
+        ) : null}
       </div>
-      {hasSubagent && (
+      {subagentTurns?.length ? (
         <div className="activity-subagent-detail">
-          {tc.subagentTurns!.map((st) => (
-            <AgentTurnActivity key={st.index} turn={st} showModel nested />
+          {subagentTurns.map((turn) => (
+            <AgentTurnActivity key={turn.index} turn={turn} />
           ))}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
 
-function AgentTurnActivity({
-  turn,
-  showModel,
-  nested
-}: {
-  turn: AgentTurnInfo;
-  showModel?: boolean;
-  nested?: boolean;
-}) {
-  const turnLabel = `turn ${turn.index + 1}`;
-  const model = showModel ? turn.model ?? '?' : undefined;
-
-  if (turn.toolCalls.length === 0) {
-    return (
-      <div className={nested ? 'activity-row activity-row-nested' : 'activity-row'}>
-        <span className="activity-label">{turnLabel}</span>
-        {model ? <span className="activity-turn-model">{model}</span> : null}
-      </div>
-    );
-  }
-
+function AgentTurnActivity({ turn }: { turn: AgentTurnInfo }) {
   return (
     <div className="activity-turn">
+      <div className="activity-turn-heading">
+        <span className="activity-label">Turn {turn.index + 1}</span>
+        <span className="activity-turn-model">{turn.model ?? 'Unknown model'}</span>
+      </div>
       {turn.toolCalls.map((tc, index) => (
-        <ToolCallRow
-          key={index}
-          tc={tc}
-          nested={nested}
-          turnLabel={index === 0 ? turnLabel : undefined}
-          showTurnColumn
-          model={index === 0 ? model : undefined}
-        />
+        <ToolCallRow key={index} tc={tc} />
       ))}
     </div>
   );
 }
 
 function TurnCard({ turn }: { turn: TurnInfo }) {
-  const { rate, currency } = useSettings();
   const [showTurns, setShowTurns] = useState(false);
   const hasActivity = turn.toolCalls.length > 0 || turn.turns.length > 0;
   const hasMultipleRequests = turn.llmRequestCount > 1;
@@ -1266,7 +675,7 @@ function TurnCard({ turn }: { turn: TurnInfo }) {
       <div className="turn-body">
         <div className="turn-aic">
           <Coins size={14} aria-hidden="true" />
-          {turn.aiCredits !== undefined ? <strong>{formatAic(turn.aiCredits)} AIC <span className="kc-price">({aicToKc(turn.aiCredits, rate)} {currency})</span></strong> : <span className="no-aic">—</span>}
+          {turn.aiCredits !== undefined ? <strong>{formatAic(turn.aiCredits)} AIC</strong> : <span className="no-aic">—</span>}
         </div>
         <div className="turn-chips">
           {turn.inputTokens > 0 ? <span title={aggregateInputTitle}>{formatNumber(turn.inputTokens)} in{hasMultipleRequests ? ' total' : ''}</span> : null}
@@ -1288,7 +697,7 @@ function TurnCard({ turn }: { turn: TurnInfo }) {
           })}
           {turn.hasBrowserContext && <span className="browser-chip" title="Contains Attached Element Context">🌐 browser</span>}
           {hasActivity && (
-            <button type="button" className="turns-toggle" onClick={() => setShowTurns((v) => !v)}>
+            <button type="button" className="turns-toggle" aria-expanded={showTurns} onClick={() => setShowTurns((v) => !v)}>
               {showTurns ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}
               {showTurns ? 'Hide turns' : 'Show turns'}
             </button>
@@ -1299,7 +708,7 @@ function TurnCard({ turn }: { turn: TurnInfo }) {
         <div className="turn-activity">
           {turn.turns.length > 0 ? (
             turn.turns.map((t) => (
-              <AgentTurnActivity key={t.index} turn={t} showModel />
+              <AgentTurnActivity key={t.index} turn={t} />
             ))
           ) : (
             turn.toolCalls.map((tc, i) => <ToolCallRow key={i} tc={tc} />)
@@ -1397,116 +806,74 @@ function SessionOverviewPanel({ overview }: { overview: SessionOverview }) {
 function CurrentContextPanel({ overview }: { overview: SessionOverview }) {
   return (
     <div className="session-overview session-overview--current">
-      <CurrentContextBar snapshot={overview.finalContext} fallbackModel={overview.contextSizes?.model} />
+      <CurrentContextBar snapshot={overview.finalContext} fallbackModel={overview.contextSizes?.model} details={overview.currentContextDetails} />
     </div>
   );
 }
 
-interface CurrentContextSegment {
-  key: 'system' | 'conversation' | 'tools' | 'other';
-  label: string;
-  tokens: number;
-}
-
-function CurrentContextBar({ snapshot, fallbackModel }: { snapshot?: ContextWindowSnapshot; fallbackModel?: string }) {
-  const segments: CurrentContextSegment[] = [];
-  if (snapshot?.systemTokens !== undefined && snapshot.systemTokens > 0) {
-    segments.push({ key: 'system', label: 'System prompt', tokens: snapshot.systemTokens });
-  }
-  if (snapshot?.conversationTokens !== undefined && snapshot.conversationTokens > 0) {
-    segments.push({ key: 'conversation', label: 'Conversation', tokens: snapshot.conversationTokens });
-  }
-  if (snapshot?.toolDefinitionsTokens !== undefined && snapshot.toolDefinitionsTokens > 0) {
-    segments.push({ key: 'tools', label: 'Tool definitions', tokens: snapshot.toolDefinitionsTokens });
-  }
-
-  const knownTokens = segments.reduce((sum, segment) => sum + segment.tokens, 0);
-  const totalTokens = snapshot?.currentTokens !== undefined ? Math.max(snapshot.currentTokens, knownTokens) : knownTokens;
-  const uncategorizedTokens = snapshot?.currentTokens !== undefined ? Math.max(0, snapshot.currentTokens - knownTokens) : 0;
-  if (uncategorizedTokens > 0 || (segments.length === 0 && totalTokens > 0)) {
-    segments.push({
-      key: 'other',
-      label: snapshot?.source === 'usage' ? 'Latest request' : 'Uncategorized',
-      tokens: uncategorizedTokens || totalTokens
-    });
-  }
-
-  const pct = (value: number) => totalTokens > 0 ? `${(value / totalTokens) * 100}%` : '0%';
-  const snapshotLabel = snapshot?.currentTokens !== undefined
-    ? `${formatNumber(snapshot.currentTokens)} tokens`
-    : totalTokens > 0
-      ? `${formatNumber(totalTokens)} tokens`
-      : 'Snapshot unavailable';
-  const snapshotTitle = snapshot?.source === 'usage'
-    ? `Current total from the latest persisted usage request${snapshot.capturedAt ? `: ${formatDateTime(snapshot.capturedAt)}` : ''}. Category breakdown is unavailable.`
-    : snapshot?.capturedAt
-      ? `Last context snapshot: ${formatDateTime(snapshot.capturedAt)}`
-      : undefined;
+function CurrentContextBar({ snapshot, fallbackModel, details = [] }: {
+  snapshot?: ContextWindowSnapshot;
+  fallbackModel?: string;
+  details?: CurrentContextDetail[];
+}) {
+  const totalChars = details.reduce((sum, detail) => sum + detail.content.length, 0);
+  const knownTokens = (snapshot?.toolDefinitionsTokens ?? 0) + (snapshot?.systemTokens ?? 0)
+    + (snapshot?.conversationTokens ?? 0);
+  const totalTokens = snapshot?.currentTokens ?? (knownTokens > 0 ? knownTokens : undefined);
+  const snapshotTitle = snapshot?.capturedAt
+    ? `Last context snapshot: ${formatDateTime(snapshot.capturedAt)}`
+    : undefined;
 
   return (
-    <div className="ctx-window ctx-window--current">
+    <div className="ctx-window">
       <div className="ctx-window-header">
         <span className="ctx-window-label">Context window · current</span>
         {(snapshot?.model ?? fallbackModel) && <span className="ctx-window-model">{snapshot?.model ?? fallbackModel}</span>}
         <span className="ctx-window-usage" title={snapshotTitle}>
-          {snapshotLabel}
+          {totalChars > 0 && `${formatChars(totalChars)} recorded`}
+          {totalChars > 0 && totalTokens !== undefined && ' · '}
+          {totalTokens !== undefined && `${formatNumber(totalTokens)} tokens`}
         </span>
       </div>
-      {segments.length > 0 ? (
-        <>
-          <div className="ctx-bar" role="img" aria-label={`Current context: ${snapshotLabel}`}>
-            {segments.map((segment) => (
-              <div
-                key={segment.key}
-                className={`ctx-final-segment ctx-seg--${segment.key}`}
-                style={{ width: pct(segment.tokens) }}
-                title={`${segment.label}: ${formatNumber(segment.tokens)} tokens`}
-              />
-            ))}
-          </div>
-          <div className="ctx-legend" aria-label="Current context breakdown">
-            {segments.map((segment) => (
-              <div key={segment.key} className={`ctx-legend-item ctx-legend-item--${segment.key}`}>
-                <span className="ctx-legend-dot" />
-                {segment.label} <span className="ctx-legend-val">{formatNumber(segment.tokens)}</span>
-              </div>
-            ))}
-          </div>
-        </>
+      {totalChars > 0 ? (
+        <ContextBreakdown
+          label="Current context by recorded character count"
+          total={totalChars}
+          items={details.map((detail) => ({ ...detail, id: detail.key, chars: detail.content.length }))}
+        />
       ) : (
-        <div className="ctx-window-empty">No persisted context snapshot is available for this session yet.</div>
+        <div className="ctx-window-empty">
+          {snapshot ? 'No session log entries were recorded for this snapshot.' : 'No persisted context snapshot is available for this session yet.'}
+        </div>
       )}
     </div>
   );
 }
 
+const initialContextOrder: Record<InitialContextSectionKey | 'user', number> = {
+  tools: 0,
+  other: 1,
+  agents: 2,
+  skills: 3,
+  instructions: 4,
+  user: 5
+};
+
 function InitialPromptBar({ sizes, messages }: { sizes: ContextSizes; messages: InitialContextMessage[] }) {
-  const [selectedSegment, setSelectedSegment] = useState<{ label: string; content: string }>();
   const visibleMessages = messages.filter((message) => message.chars > 0);
   const total = visibleMessages.reduce((sum, message) => sum + message.chars, 0);
   const systemCount = visibleMessages.filter((message) => message.type === 'system').length;
-  const legendItems = visibleMessages.flatMap<{ id: string; key: InitialContextSectionKey | 'user'; label: string; chars: number; content: string }>((message) =>
+  const items = visibleMessages.flatMap<ContextBreakdownItem<InitialContextSectionKey | 'user'>>((message) =>
     message.type === 'system'
-      ? (message.sections ?? []).map((section) => ({
-          id: `${message.id}-${section.key}`,
+      ? (message.sections?.length ? message.sections : [{ ...message, key: 'other' as const, label: 'System message' }]).map((section, index) => ({
+          id: `${message.id}-${index}`,
           key: section.key,
           label: systemCount > 1 ? `${message.label} · ${section.label}` : section.label,
           chars: section.chars,
           content: section.content
         }))
       : [{ id: message.id, key: 'user' as const, label: message.label, chars: message.chars, content: message.content }]
-  );
-
-  const pct = (value: number) => total > 0 ? Math.min(100, (value / total) * 100).toFixed(3) : '0';
-
-  useEffect(() => {
-    if (!selectedSegment) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSelectedSegment(undefined);
-    };
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [selectedSegment]);
+  ).sort((a, b) => initialContextOrder[a.key] - initialContextOrder[b.key]);
 
   return (
     <div className="ctx-window">
@@ -1515,84 +882,66 @@ function InitialPromptBar({ sizes, messages }: { sizes: ContextSizes; messages: 
         {sizes.model && <span className="ctx-window-model">{sizes.model}</span>}
         <span className="ctx-window-usage">{formatChars(total)} raw text</span>
       </div>
-      <div className="ctx-bar" role="group" aria-label={`Initial context: ${formatChars(total)} raw text`}>
-        {visibleMessages.map((message) => message.type === 'system' ? (
-          <div
-            key={message.id}
-            className="ctx-message ctx-message--system"
-            style={{ width: `${pct(message.chars)}%` }}
-            role="group"
-            aria-label={`${message.label}: ${formatChars(message.chars)}`}
-          >
-            {(message.sections ?? []).map((section) => (
-              <button
-                type="button"
-                key={section.key}
-                className={`ctx-seg ctx-seg--${section.key}`}
-                style={{ width: `${(section.chars / message.chars) * 100}%` }}
-                title={`${section.label}: ${formatChars(section.chars)}`}
-                aria-label={`Show ${message.label} ${section.label}, ${formatChars(section.chars)}`}
-                onClick={() => setSelectedSegment({ label: systemCount > 1 ? `${message.label} · ${section.label}` : section.label, content: section.content })}
-              />
-            ))}
-          </div>
-        ) : (
+      <ContextBreakdown label="Initial context by character count" total={total} items={items} />
+    </div>
+  );
+}
+
+interface ContextBreakdownItem<Key extends string = string> {
+  id: string;
+  key: Key;
+  label: string;
+  chars: number;
+  content: string;
+}
+
+function ContextBreakdown({ label, total, items }: {
+  label: string;
+  total: number;
+  items: ContextBreakdownItem[];
+}) {
+  const contentId = useId();
+  const [selected, setSelected] = useState<string>();
+  const selectedItem = items.find((item) => item.id === selected);
+  const toggleDetail = (id: string) => setSelected((current) => current === id ? undefined : id);
+
+  return (
+    <>
+      <div className="ctx-bar" role="group" aria-label={label}>
+        {items.map((item) => (
           <button
             type="button"
-            key={message.id}
-            className="ctx-message ctx-message--user ctx-seg--user"
-            style={{ width: `${pct(message.chars)}%` }}
-            title={`${message.label}: ${formatChars(message.chars)}`}
-            aria-label={`Show ${message.label}, ${formatChars(message.chars)}`}
-            onClick={() => setSelectedSegment({ label: message.label, content: message.content })}
+            key={item.id}
+            className={`ctx-seg ctx-seg--${item.key}`}
+            style={{ width: total > 0 ? `${(item.chars / total) * 100}%` : '0%' }}
+            title={`${item.label}: ${formatChars(item.chars)}`}
+            aria-label={item.label}
+            aria-expanded={selected === item.id}
+            aria-controls={contentId}
+            onClick={() => toggleDetail(item.id)}
           />
         ))}
       </div>
-      <div className="ctx-legend">
-        {legendItems.map((item) => (
+      <div className="ctx-legend" role="group" aria-label="Context sections">
+        {items.map((item) => (
           <button
             type="button"
             key={item.id}
             className={`ctx-legend-item ctx-legend-item--${item.key}`}
-            onClick={() => setSelectedSegment({ label: item.label, content: item.content })}
+            aria-expanded={selected === item.id}
+            aria-controls={contentId}
+            onClick={() => toggleDetail(item.id)}
           >
             <span className="ctx-legend-dot" />
             {item.label} <span className="ctx-legend-val">{formatChars(item.chars, false)}</span>
           </button>
         ))}
       </div>
-      {selectedSegment && (
-        <div className="ctx-modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setSelectedSegment(undefined)}>
-          <section className="ctx-modal" role="dialog" aria-modal="true" aria-labelledby="ctx-modal-title">
-            <header className="ctx-modal-header">
-              <div>
-                <h3 id="ctx-modal-title">{selectedSegment.label}</h3>
-                <span>{formatChars(selectedSegment.content.length)}</span>
-              </div>
-              <button type="button" className="ctx-modal-close" title="Close" aria-label="Close context detail" onClick={() => setSelectedSegment(undefined)}>
-                <X size={18} aria-hidden="true" />
-              </button>
-            </header>
-            <pre className="ctx-modal-content">{selectedSegment.content}</pre>
-          </section>
-        </div>
-      )}
-    </div>
+      <div id={contentId} role="region" aria-label={selectedItem?.label} hidden={!selectedItem}>
+        {selectedItem && <ContextContent key={selectedItem.id} content={selectedItem.content} />}
+      </div>
+    </>
   );
-}
-
-function PathLine({ label, value }: { label: string; value: string }) {
-  const vscodePath = value.replace(/\\/g, '/');
-  return (
-    <a href={`vscode://file/${encodeURI(vscodePath)}`} title={value} className="path-link" aria-label={`Open ${label}`}>
-      <ExternalLink size={15} aria-hidden="true" />
-      <span>{label}</span>
-    </a>
-  );
-}
-
-function truncate(text: string, max: number) {
-  return text.length <= max ? text : text.slice(0, max) + '…';
 }
 
 function formatDateTime(value: string) {
@@ -1608,8 +957,4 @@ function formatNumber(value: number) {
 
 function formatAic(value: number) {
   return value.toFixed(2);
-}
-
-function aicToKc(value: number, rate: number) {
-  return (value / rate).toFixed(1);
 }

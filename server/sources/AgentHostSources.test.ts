@@ -203,6 +203,38 @@ test('event reader falls back to the latest main usage request for current conte
   });
 });
 
+test('current context shows recorded tool discovery and excludes later tool results', async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-current-context-'));
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  const eventPath = path.join(root, 'events.jsonl');
+  const timestamp = (second: number) => `2026-01-01T10:00:0${second}.000Z`;
+  const events = [
+    { type: 'system.message', data: { content: '<available_skills><skill>A</skill></available_skills>System prompt<agents><agent>B</agent></agents><tools><read>Read</read></tools><custom_instruction>Initial instruction</custom_instruction>' } },
+    { type: 'instruction.update', data: { name: 'sandbox-guidance', content: 'Recorded instruction' } },
+    { type: 'tool.execution_start', data: { toolCallId: 'search', toolName: 'tool_search_tool' } },
+    { type: 'tool.execution_complete', data: { toolCallId: 'search', result: { content: 'Found 1 matching tool(s): doist-todoist-ai-find-tasks' } } },
+    { type: 'tool.execution_start', data: { toolCallId: 'todoist', toolName: 'doist-todoist-ai-find-tasks' } },
+    { type: 'session.usage_record', data: { usage: { availableToolCount: 238 } } },
+    { type: 'tool.execution_complete', data: { toolCallId: 'todoist', result: { content: 'Result after snapshot' } } }
+  ];
+  await fs.writeFile(eventPath, events.map((event, index) => JSON.stringify({ ...event, timestamp: timestamp(index) })).join('\n') + '\n');
+  const details = await new AgentHostEventReader().readDetails(eventPath, [
+    { sessionId: 'fixture-session', model: 'fixture-model', inputTokens: 100, outputTokens: 10, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, nanoAiu: 0, timestamp: timestamp(5) }
+  ]);
+  const sections = details.overview.currentContextDetails;
+
+  assert.deepEqual(sections?.map((section) => section.key), ['tools', 'system', 'agents', 'skills', 'instructions', 'conversation']);
+  assert.equal(sections?.find((section) => section.key === 'system')?.content, 'System prompt');
+  assert.match(sections?.find((section) => section.key === 'agents')?.content ?? '', /<agent>B<\/agent>/);
+  assert.match(sections?.find((section) => section.key === 'skills')?.content ?? '', /<skill>A<\/skill>/);
+  assert.match(sections?.find((section) => section.key === 'instructions')?.content ?? '', /Initial instruction[\s\S]*Recorded instruction/);
+  assert.match(sections?.find((section) => section.key === 'tools')?.content ?? '', /238[\s\S]*doist-todoist-ai-find-tasks/);
+  const conversation = sections?.find((section) => section.key === 'conversation')?.content ?? '';
+  assert.match(conversation, /doist-todoist-ai-find-tasks · call/);
+  assert.doesNotMatch(conversation, /Result after snapshot/);
+  assert.equal(details.turns[0].toolCalls.find((tool) => tool.name === 'doist-todoist-ai-find-tasks')?.deferred, true);
+});
+
 test('event reader groups assistant iterations under user interactions', async (context) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-rounds-'));
   context.after(() => fs.rm(root, { recursive: true, force: true }));
@@ -399,6 +431,50 @@ test('Agent Host source discovers directory and root JSONL generations lazily', 
   assert.deepEqual((await source.getSessionOverview('fixture-session'))?.agents.map((agent) => agent.name), ['fixture-agent']);
   assert.equal(source.getSession('root-session')?.hasDetailedEvents, true);
   assert.equal(source.getSession('empty-session'), undefined);
+});
+
+test('Agent Host source hides harness-only sessions and keeps model calls without credits', async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-harness-'));
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  const stateRoot = path.join(root, 'session-state');
+  const databasePath = path.join(root, 'session-store.db');
+  await fs.mkdir(stateRoot, { recursive: true });
+  createFixtureDatabase(databasePath);
+
+  const database = new Database(databasePath);
+  try {
+    database.exec(`
+      INSERT INTO sessions (id, summary, host_type) VALUES ('env-catalog', '/env', 'vscode-agent-host');
+      INSERT INTO sessions (id, summary, host_type) VALUES ('zero-credits', '/env', 'vscode-agent-host');
+      INSERT INTO assistant_usage_events (id, session_id, model, total_nano_aiu) VALUES (3, 'zero-credits', 'fixture-model', 0);
+    `);
+  } finally {
+    database.close();
+  }
+
+  const workspaceOnly = path.join(stateRoot, 'env-workspace');
+  await fs.mkdir(workspaceOnly);
+  await fs.writeFile(path.join(workspaceOnly, 'workspace.yaml'), 'summary: /env\nclient_name: vscode-agent-host\n');
+
+  const command = { type: 'user.message', data: { content: '/env' } };
+  for (const [id, events] of [
+    ['local-command', [command, { type: 'assistant.turn_start' }, { type: 'assistant.turn_end' }]],
+    ['logged-model-call', [command, { type: 'model.model_call_started' }]],
+    ['legacy-response', [command, { type: 'assistant.message' }]],
+    ['mixed-prompts', [command, { type: 'user.message', data: { content: 'Explain this workspace' } }]]
+  ] as const) {
+    await fs.writeFile(path.join(stateRoot, `${id}.jsonl`), events.map((event) => JSON.stringify(event)).join('\n') + '\n');
+  }
+  await fs.writeFile(path.join(stateRoot, 'incomplete-log.jsonl'), JSON.stringify(command) + '\n{"type":');
+
+  const source = new CopilotAgentHostSource({ agentHostRoot: root, pollIntervalMs: 3_600_000 });
+  context.after(() => source.stop());
+  await source.start();
+
+  assert.deepEqual(source.listSessions().sessions.map((session) => session.id).sort(), [
+    'fixture-session', 'incomplete-log', 'legacy-response', 'logged-model-call', 'mixed-prompts', 'zero-credits'
+  ]);
+  assert.equal(source.getSession('zero-credits')?.cost.aiCredits, 0);
 });
 
 test('Agent Host source reconstructs stored turns when the event stream is unavailable', async (context) => {

@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentHostUsageRow } from './AgentHostStoreReader.js';
-import type { AgentInfo, AgentTurnInfo, AttachmentInfo, ContextWindowSnapshot, InitialContextMessage, InitialContextSection, InstructionInfo, SessionOverview, SkillInfo, ToolCallInfo, ToolInfo, TurnInfo } from './SessionSource.js';
+import type { AgentInfo, AgentTurnInfo, AttachmentInfo, ContextWindowSnapshot, CurrentContextDetail, InitialContextMessage, InitialContextSection, InstructionInfo, SessionOverview, SkillInfo, ToolCallInfo, ToolInfo, TurnInfo } from './SessionSource.js';
 
 const HEADER_LIMIT_BYTES = 256 * 1024;
 const TEXT_LIMIT = 20_000;
@@ -53,6 +53,7 @@ export interface AgentHostEventHeader {
   schemaVersion?: number;
   firstUserMessage?: string;
   clientName?: string;
+  commandOnly?: boolean;
 }
 
 export interface AgentHostEventDetails {
@@ -112,14 +113,33 @@ export class AgentHostEventReader {
       if (cached && cached.size === stats.size && cached.mtimeMs === stats.mtimeMs) return cached.header;
       const length = Math.min(stats.size, HEADER_LIMIT_BYTES);
       const buffer = Buffer.alloc(length);
-      await file.read(buffer, 0, length, 0);
-      const lines = buffer.toString('utf8').split(/\r?\n/);
+      const { bytesRead } = await file.read(buffer, 0, length, 0);
+      const lines = buffer.toString('utf8', 0, bytesRead).split(/\r?\n/);
       const header: AgentHostEventHeader = { updatedAt: stats.mtime.toISOString() };
+      let complete = bytesRead === stats.size;
+      let userMessages = 0;
+      let commandMessages = 0;
+      let hasModelActivity = false;
       for (const line of lines) {
+        if (!line.trim()) continue;
         const event = parseEvent(line, 0);
-        if (!event) continue;
+        if (!event?.type) {
+          complete = false;
+          continue;
+        }
         consumeHeaderEvent(header, event);
+        if (event.type === 'user.message') {
+          userMessages += 1;
+          if (isSlashCommand(textValue(event.data.content))) commandMessages += 1;
+        }
+        hasModelActivity ||= event.type === 'assistant.message'
+          || event.type === 'session.usage_record'
+          || event.type.startsWith('model.')
+          || (event.type === 'session.shutdown' || event.type === 'session.usage_checkpoint')
+            && ((numberValue(event.data.totalNanoAiu) ?? 0) > 0
+              || (numberValue(event.data.totalApiDurationMs) ?? 0) > 0);
       }
+      header.commandOnly = complete && userMessages > 0 && userMessages === commandMessages && !hasModelActivity;
       this.headerCache.set(filePath, { size: stats.size, mtimeMs: stats.mtimeMs, header });
       return header;
     } catch {
@@ -203,6 +223,10 @@ function parseEvent(line: string, order: number): AgentHostEvent | undefined {
   } catch {
     return undefined;
   }
+}
+
+export function isSlashCommand(message: string | undefined): boolean {
+  return /^\/[\w-]+(?:[ \t].*)?$/.test(message?.trim() ?? '');
 }
 
 function consumeHeaderEvent(header: AgentHostEventHeader, event: AgentHostEvent): void {
@@ -486,17 +510,13 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
       systemTokens ??= snapshot?.systemTokens;
       conversationTokens ??= snapshot?.conversationTokens;
       toolDefinitionsTokens ??= snapshot?.toolDefinitionsTokens;
-      if (snapshot) {
-        finalContext = mergeContextSnapshot(finalContext, snapshot);
-      }
+      if (snapshot) finalContext = snapshot;
     }
   }
 
   const usageContext = createUsageContextSnapshot(usage);
-  if (usageContext) {
-    finalContext = finalContext
-      ? mergeContextSnapshot(usageContext, finalContext)
-      : usageContext;
+  if (usageContext && (!finalContext || (usageContext.capturedAt ?? '') > (finalContext.capturedAt ?? ''))) {
+    finalContext = usageContext;
   }
 
   while (pendingUsers.length) {
@@ -570,6 +590,7 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
     initialContextMessages,
     contextContent,
     finalContext,
+    currentContextDetails: readCurrentContextDetails(ordered, finalContext?.capturedAt),
     contextSizes: {
       systemPromptTotalBytes: Buffer.byteLength(systemPrompt, 'utf8'),
       systemPromptSkillsBytes: blockByteLength(systemPrompt, 'available_skills'),
@@ -623,16 +644,74 @@ function readContextSnapshot(data: Record<string, unknown>, capturedAt?: string)
     : undefined;
 }
 
-function mergeContextSnapshot(previous: ContextWindowSnapshot | undefined, current: ContextWindowSnapshot): ContextWindowSnapshot {
-  return {
-    currentTokens: current.currentTokens ?? previous?.currentTokens,
-    systemTokens: current.systemTokens ?? previous?.systemTokens,
-    conversationTokens: current.conversationTokens ?? previous?.conversationTokens,
-    toolDefinitionsTokens: current.toolDefinitionsTokens ?? previous?.toolDefinitionsTokens,
-    model: current.model ?? previous?.model,
-    capturedAt: current.capturedAt ?? previous?.capturedAt,
-    source: current.currentTokens !== undefined ? current.source : previous?.source ?? current.source
+function readCurrentContextDetails(events: AgentHostEvent[], capturedAt?: string): CurrentContextDetail[] | undefined {
+  if (!capturedAt) return undefined;
+  const cutoff = Date.parse(capturedAt);
+  if (!Number.isFinite(cutoff)) return undefined;
+
+  const sections: Record<CurrentContextDetail['key'], string[]> = {
+    tools: [],
+    system: [],
+    agents: [],
+    skills: [],
+    instructions: [],
+    conversation: []
   };
+  const { tools, instructions, conversation } = sections;
+  const toolNames = new Map<string, string>();
+  const discoveredTools = new Set<string>();
+  let reportedTools: string | undefined;
+  for (const { type, data, timestamp } of events) {
+    if (!timestamp || !(Date.parse(timestamp) <= cutoff)) continue;
+    if (type === 'session.usage_record' && Date.parse(timestamp) === cutoff && isRecord(data.usage)) {
+      const count = numberValue(data.usage.availableToolCount);
+      if (count !== undefined) reportedTools = `Available tools reported by the request: ${count}`;
+      break;
+    }
+    if (type === 'system.message') {
+      for (const section of splitSystemContext(textValue(data.content) ?? '')) {
+        sections[section.key === 'other' ? 'system' : section.key].push(section.content);
+      }
+    } else if (type === 'instruction.update') {
+      const content = textValue(data.content);
+      if (content) instructions.push(`Instruction update: ${stringValue(data.name) ?? 'unnamed'}\n${content}`);
+    } else if (type === 'user.message' || type === 'assistant.message') {
+      const content = (type === 'user.message' ? textValue(data.transformedContent) : undefined) ?? textValue(data.content);
+      if (content) conversation.push(`${type === 'user.message' ? 'User' : 'Assistant'} · ${timestamp}\n${content}`);
+      if (type === 'user.message' && Array.isArray(data.attachments) && data.attachments.length) {
+        conversation.push(`Attachments · ${timestamp}\n${JSON.stringify(data.attachments, null, 2)}`);
+      }
+    } else if (type === 'tool.execution_start' || type === 'external_tool.requested') {
+      const name = stringValue(data.toolName) ?? 'Tool';
+      const id = stringValue(data.toolCallId);
+      const requestId = stringValue(data.requestId);
+      if (id) toolNames.set(id, name);
+      if (requestId) toolNames.set(requestId, name);
+      const args = data.arguments;
+      conversation.push(`${name} · call · ${timestamp}\n${typeof args === 'string' ? args : JSON.stringify(args ?? '', null, 2)}`);
+    } else if (type === 'tool.execution_complete' || type === 'external_tool.completed') {
+      const id = stringValue(data.toolCallId) ?? stringValue(data.requestId);
+      const name = (id ? toolNames.get(id) : undefined) ?? 'Tool';
+      const content = toolResultContent(data.result);
+      if (content) conversation.push(`${name} · result · ${timestamp}\n${content}`);
+      if (name === 'tool_search_tool') {
+        for (const tool of parseDeferredToolNames(data.result)) discoveredTools.add(tool);
+      }
+    }
+  }
+
+  if (discoveredTools.size) tools.unshift(`Tools found by tool search\n${[...discoveredTools].sort().join('\n')}`);
+  if (reportedTools) tools.unshift(reportedTools);
+
+  const details: CurrentContextDetail[] = [
+    { key: 'tools', label: 'Tools', content: tools.join('\n\n') },
+    { key: 'system', label: 'System message', content: sections.system.join('\n\n') },
+    { key: 'agents', label: 'Agents', content: sections.agents.join('\n\n') },
+    { key: 'skills', label: 'Skills', content: sections.skills.join('\n\n') },
+    { key: 'instructions', label: 'Instructions', content: instructions.join('\n\n') },
+    { key: 'conversation', label: 'Messages and tool calls', content: conversation.join('\n\n') }
+  ];
+  return details.filter((detail) => detail.content);
 }
 
 export function createUsageContextSnapshot(usage: AgentHostUsageRow[]): ContextWindowSnapshot | undefined {
@@ -771,6 +850,8 @@ function parseDeferredToolNames(value: unknown): string[] {
   if (!isRecord(value)) return [];
   for (const candidate of [value.content, value.detailedContent]) {
     if (typeof candidate !== 'string') continue;
+    const names = candidate.match(/^Found \d+ matching tool\(s\):\s*([\w.:-]+(?:\s*,\s*[\w.:-]+)*)\s*$/)?.[1];
+    if (names) return [...new Set(names.split(',').map((name) => name.trim()))];
     try {
       const parsed = JSON.parse(candidate) as unknown;
       if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) {
