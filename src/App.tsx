@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowLeft, ChevronDown, ChevronRight, Clock3, Coins, Filter, RefreshCw, Search } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, ChevronRight, Clock3, Coins, Filter, RefreshCw, Search } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { CurrentContextDetail, CurrentContextEntry } from '../server/sources/SessionSource';
 import { ContextContent } from './ContextContent';
@@ -971,14 +971,14 @@ const contextEntryTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'short'
 function ContextConversation({ entries, content }: { entries: CurrentContextEntry[]; content: string }) {
   const listRef = useRef<HTMLOListElement>(null);
 
-  function scrollToNextEntry(index: number) {
+  function scrollToEntry(index: number, direction: 'previous' | 'next') {
     const list = listRef.current;
-    const next = list?.children.item(index + 1);
-    if (!list || !(next instanceof HTMLElement)) return;
+    const entry = list?.children.item(index);
+    if (!list || !(entry instanceof HTMLElement)) return;
 
-    const top = list.scrollTop + next.getBoundingClientRect().top - list.getBoundingClientRect().top - list.clientTop;
-    const nextControl = next.querySelector<HTMLButtonElement>('.ctx-entry-next:not(:disabled)') ?? next;
-    nextControl.focus({ preventScroll: true });
+    const top = list.scrollTop + entry.getBoundingClientRect().top - list.getBoundingClientRect().top - list.clientTop;
+    const control = entry.querySelector<HTMLButtonElement>(`[data-direction="${direction}"]:enabled`) ?? entry;
+    control.focus({ preventScroll: true });
     list.scrollTo({ top, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
 
@@ -991,8 +991,12 @@ function ContextConversation({ entries, content }: { entries: CurrentContextEntr
             {toolName && <span>{toolName}</span>}
             <div className="ctx-entry-actions">
               <time dateTime={timestamp}>{contextEntryTime.format(new Date(timestamp))}</time>
-              <button type="button" className="ctx-entry-next" aria-label="Next entry" title="Next entry"
-                disabled={index === entries.length - 1} onClick={() => scrollToNextEntry(index)}>
+              <button type="button" className="ctx-entry-step" data-direction="previous" aria-label="Previous entry" title="Previous entry"
+                disabled={index === 0} onClick={() => scrollToEntry(index - 1, 'previous')}>
+                <ArrowUp size={14} aria-hidden="true" />
+              </button>
+              <button type="button" className="ctx-entry-step" data-direction="next" aria-label="Next entry" title="Next entry"
+                disabled={index === entries.length - 1} onClick={() => scrollToEntry(index + 1, 'next')}>
                 <ArrowDown size={14} aria-hidden="true" />
               </button>
             </div>
