@@ -7,11 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-21
+
 ### Added
 
-- Show the latest persisted context-window token snapshot below the conversation while keeping the initial context bar at the top.
-- Fall back to the latest main usage request when no explicit context snapshot was persisted, without inventing a category breakdown.
+- Compare the initial context with the latest recorded context on the session detail page. Both bars show character counts, and the current panel reports the persisted token total when available.
+- Open context sections inline with formatted, syntax-highlighted XML.
 - Reconstruct stored conversation turns from SQLite when a session has no event stream.
+
+### Changed
+
+- Simplify the interface around the session list and detail view. Display costs in reported AI Credits.
+
+### Fixed
+
+- Use the latest system prompt for the current context after a session resumes and include initial runtime instruction updates in both views.
+- Hide sessions that contain only harness commands when the recorded data confirms there was no model activity.
 
 ## [0.2.2] - 2026-08-19
 
@@ -71,7 +82,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expanded the project documentation and npm package overview.
 - Added configurable polling through `SESSION_POLL_INTERVAL_MS`.
 
-[Unreleased]: https://github.com/mirekholec/copilot-debugger/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/mirekholec/copilot-debugger/compare/v1.0.0...HEAD
+[1.0.0]: https://www.npmjs.com/package/copilot-debugger/v/1.0.0
 [0.2.2]: https://www.npmjs.com/package/copilot-debugger/v/0.2.2
 [0.2.1]: https://www.npmjs.com/package/copilot-debugger/v/0.2.1
 [0.2.0]: https://www.npmjs.com/package/copilot-debugger/v/0.2.0

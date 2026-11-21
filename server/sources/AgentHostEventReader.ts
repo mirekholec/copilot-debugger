@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentHostUsageRow } from './AgentHostStoreReader.js';
-import type { AgentInfo, AgentTurnInfo, AttachmentInfo, ContextWindowSnapshot, CurrentContextDetail, InitialContextMessage, InitialContextSection, InstructionInfo, SessionOverview, SkillInfo, ToolCallInfo, ToolInfo, TurnInfo } from './SessionSource.js';
+import type { AgentInfo, AgentTurnInfo, AttachmentInfo, ContextWindowSnapshot, CurrentContextDetail, CurrentContextEntry, InitialContextMessage, InitialContextSection, InstructionInfo, SessionOverview, SkillInfo, ToolCallInfo, ToolInfo, TurnInfo } from './SessionSource.js';
 
 const HEADER_LIMIT_BYTES = 256 * 1024;
 const TEXT_LIMIT = 20_000;
@@ -678,15 +678,23 @@ function readCurrentContextDetails(events: AgentHostEvent[], capturedAt?: string
   const cutoff = Date.parse(capturedAt);
   if (!Number.isFinite(cutoff)) return undefined;
 
-  const sections: Record<CurrentContextDetail['key'], string[]> = {
+  const sections: Record<Exclude<CurrentContextDetail['key'], 'conversation'>, string[]> = {
     tools: [],
     system: [],
     agents: [],
     skills: [],
-    instructions: [],
-    conversation: []
+    instructions: []
   };
-  const { tools, instructions, conversation } = sections;
+  const { tools, instructions } = sections;
+  const entries: CurrentContextEntry[] = [];
+  let conversation = '';
+  const addEntry = (kind: CurrentContextEntry['kind'], title: string, timestamp: string, content: string, toolName?: string) => {
+    const heading = `${title} · ${timestamp}\n`;
+    if (entries.length) conversation += '\n\n';
+    const start = conversation.length + heading.length;
+    conversation += heading + content;
+    entries.push({ kind, timestamp, toolName, start, end: conversation.length });
+  };
   const toolNames = new Map<string, string>();
   const discoveredTools = new Set<string>();
   let systemPrompt: string | undefined;
@@ -705,10 +713,11 @@ function readCurrentContextDetails(events: AgentHostEvent[], capturedAt?: string
       const update = formatInstructionUpdate(data);
       if (update) instructions.push(update);
     } else if (type === 'user.message' || type === 'assistant.message') {
-      const content = (type === 'user.message' ? textValue(data.transformedContent) : undefined) ?? textValue(data.content);
-      if (content) conversation.push(`${type === 'user.message' ? 'User' : 'Assistant'} · ${timestamp}\n${content}`);
-      if (type === 'user.message' && Array.isArray(data.attachments) && data.attachments.length) {
-        conversation.push(`Attachments · ${timestamp}\n${JSON.stringify(data.attachments, null, 2)}`);
+      const isUser = type === 'user.message';
+      const content = (isUser ? textValue(data.transformedContent) : undefined) ?? textValue(data.content);
+      if (content) addEntry(isUser ? 'user' : 'assistant', isUser ? 'User' : 'Assistant', timestamp, content);
+      if (isUser && Array.isArray(data.attachments) && data.attachments.length) {
+        addEntry('attachments', 'Attachments', timestamp, JSON.stringify(data.attachments, null, 2));
       }
     } else if (type === 'tool.execution_start' || type === 'external_tool.requested') {
       const name = stringValue(data.toolName) ?? 'Tool';
@@ -717,12 +726,12 @@ function readCurrentContextDetails(events: AgentHostEvent[], capturedAt?: string
       if (id) toolNames.set(id, name);
       if (requestId) toolNames.set(requestId, name);
       const args = data.arguments;
-      conversation.push(`${name} · call · ${timestamp}\n${typeof args === 'string' ? args : JSON.stringify(args ?? '', null, 2)}`);
+      addEntry('tool-call', `${name} · call`, timestamp, typeof args === 'string' ? args : JSON.stringify(args ?? '', null, 2), name);
     } else if (type === 'tool.execution_complete' || type === 'external_tool.completed') {
       const id = stringValue(data.toolCallId) ?? stringValue(data.requestId);
       const name = (id ? toolNames.get(id) : undefined) ?? 'Tool';
       const content = toolResultContent(data.result);
-      if (content) conversation.push(`${name} · result · ${timestamp}\n${content}`);
+      if (content) addEntry('tool-result', `${name} · result`, timestamp, content, name);
       if (name === 'tool_search_tool') {
         for (const tool of parseDeferredToolNames(data.result)) discoveredTools.add(tool);
       }
@@ -743,7 +752,7 @@ function readCurrentContextDetails(events: AgentHostEvent[], capturedAt?: string
     { key: 'agents', label: 'Agents', content: sections.agents.join('\n\n') },
     { key: 'skills', label: 'Skills', content: sections.skills.join('\n\n') },
     { key: 'instructions', label: 'Instructions', content: instructions.join('\n\n') },
-    { key: 'conversation', label: 'Messages and tool calls', content: conversation.join('\n\n') }
+    { key: 'conversation', label: 'Messages and tool calls', content: conversation, entries }
   ];
   return details.filter((detail) => detail.content);
 }

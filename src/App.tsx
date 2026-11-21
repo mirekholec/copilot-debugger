@@ -1,5 +1,6 @@
-import { ArrowLeft, ChevronDown, ChevronRight, Clock3, Coins, Filter, RefreshCw, Search } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ChevronDown, ChevronRight, Clock3, Coins, Filter, RefreshCw, Search } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { CurrentContextDetail, CurrentContextEntry } from '../server/sources/SessionSource';
 import { ContextContent } from './ContextContent';
 
 interface NormalizedSession {
@@ -177,12 +178,6 @@ interface ContextWindowSnapshot {
   model?: string;
   capturedAt?: string;
   source?: 'event' | 'usage';
-}
-
-interface CurrentContextDetail {
-  key: 'tools' | 'system' | 'agents' | 'skills' | 'instructions' | 'conversation';
-  label: string;
-  content: string;
 }
 
 interface SessionOverview {
@@ -910,6 +905,7 @@ interface ContextBreakdownItem<Key extends string = string> {
   label: string;
   chars: number;
   content: string;
+  entries?: CurrentContextEntry[];
 }
 
 function ContextBreakdown({ label, scaleChars, items }: {
@@ -955,9 +951,56 @@ function ContextBreakdown({ label, scaleChars, items }: {
         ))}
       </div>
       <div id={contentId} role="region" aria-label={selectedItem?.label} hidden={!selectedItem}>
-        {selectedItem && <ContextContent key={selectedItem.id} content={selectedItem.content} />}
+        {selectedItem?.entries?.length ? (
+          <ContextConversation entries={selectedItem.entries} content={selectedItem.content} />
+        ) : selectedItem && <ContextContent key={selectedItem.id} content={selectedItem.content} />}
       </div>
     </>
+  );
+}
+
+const contextEntryLabels: Record<CurrentContextEntry['kind'], string> = {
+  user: 'User',
+  assistant: 'Assistant',
+  'tool-call': 'Tool call',
+  'tool-result': 'Tool result',
+  attachments: 'Attachments'
+};
+const contextEntryTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'medium' });
+
+function ContextConversation({ entries, content }: { entries: CurrentContextEntry[]; content: string }) {
+  const listRef = useRef<HTMLOListElement>(null);
+
+  function scrollToNextEntry(index: number) {
+    const list = listRef.current;
+    const next = list?.children.item(index + 1);
+    if (!list || !(next instanceof HTMLElement)) return;
+
+    const top = list.scrollTop + next.getBoundingClientRect().top - list.getBoundingClientRect().top - list.clientTop;
+    const nextControl = next.querySelector<HTMLButtonElement>('.ctx-entry-next:not(:disabled)') ?? next;
+    nextControl.focus({ preventScroll: true });
+    list.scrollTo({ top, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  }
+
+  return (
+    <ol ref={listRef} className="ctx-conversation" tabIndex={0} aria-label="Recorded messages and tool calls">
+      {entries.map(({ kind, timestamp, toolName, start, end }, index) => (
+        <li key={start} className={`ctx-entry ctx-entry--${kind}`} tabIndex={-1}>
+          <div className="ctx-entry-header">
+            <strong>{contextEntryLabels[kind]}</strong>
+            {toolName && <span>{toolName}</span>}
+            <div className="ctx-entry-actions">
+              <time dateTime={timestamp}>{contextEntryTime.format(new Date(timestamp))}</time>
+              <button type="button" className="ctx-entry-next" aria-label="Next entry" title="Next entry"
+                disabled={index === entries.length - 1} onClick={() => scrollToNextEntry(index)}>
+                <ArrowDown size={14} aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+          {end > start && <ContextContent content={content.slice(start, end)} />}
+        </li>
+      ))}
+    </ol>
   );
 }
 

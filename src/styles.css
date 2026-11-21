@@ -1019,18 +1019,126 @@ button.ctx-legend-item:hover {
   font-weight: 500;
 }
 
-.ctx-preview {
+.ctx-preview,
+.ctx-conversation {
   max-height: min(55vh, 36rem);
+  overflow: auto;
+}
+
+.ctx-preview {
   margin: 8px 0 0;
   border: 1px solid var(--border);
   border-radius: 5px;
   padding: 16px;
-  overflow: auto;
   color: var(--secondary);
   background: var(--subtle);
   font: 0.78rem/1.55 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.ctx-conversation {
+  --scroll-thumb: #8193ad;
+  margin: 8px 0 0;
+  padding: 8px 8px 8px 2.4rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  scrollbar-width: auto;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+
+@supports selector(::-webkit-scrollbar) {
+  .ctx-conversation {
+    scrollbar-color: auto;
+  }
+
+  .ctx-conversation::-webkit-scrollbar {
+    width: 16px;
+  }
+
+  .ctx-conversation::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background: var(--scroll-thumb);
+    background-clip: padding-box;
+  }
+
+  .ctx-conversation::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+.ctx-entry {
+  --entry-accent: var(--muted);
+  border: 1px solid var(--border);
+  border-inline-start: 3px solid var(--entry-accent);
+  border-radius: 6px;
+  background: var(--subtle);
+}
+
+.ctx-entry + .ctx-entry {
+  margin-top: 8px;
+}
+
+.ctx-entry--user { --entry-accent: var(--accent); }
+.ctx-entry--assistant { --entry-accent: #21684e; }
+.ctx-entry--tool-call { --entry-accent: #8b2635; }
+.ctx-entry--tool-result { --entry-accent: #75438f; }
+
+.ctx-entry-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 8px 12px;
+  overflow-wrap: anywhere;
+}
+
+.ctx-entry-header strong {
+  color: var(--entry-accent);
+}
+
+.ctx-entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+  white-space: nowrap;
+}
+
+.ctx-entry-next {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+}
+
+.ctx-entry-next:hover:enabled {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.ctx-entry-next:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.ctx-entry .ctx-preview {
+  max-height: none;
+  margin: 0;
+  padding: 8px 12px 10px;
+  overflow: visible;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  font-variant-numeric: normal;
 }
 
 .ctx-xml-tag {

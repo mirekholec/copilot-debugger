@@ -229,9 +229,17 @@ test('current context shows recorded tool discovery and excludes later tool resu
   assert.match(sections?.find((section) => section.key === 'skills')?.content ?? '', /<skill>A<\/skill>/);
   assert.match(sections?.find((section) => section.key === 'instructions')?.content ?? '', /Initial instruction[\s\S]*Recorded instruction/);
   assert.match(sections?.find((section) => section.key === 'tools')?.content ?? '', /238[\s\S]*doist-todoist-ai-find-tasks/);
-  const conversation = sections?.find((section) => section.key === 'conversation')?.content ?? '';
-  assert.match(conversation, /doist-todoist-ai-find-tasks · call/);
-  assert.doesNotMatch(conversation, /Result after snapshot/);
+  const conversation = sections?.find((section) => section.key === 'conversation');
+  assert.ok(conversation);
+  assert.match(conversation.content, /doist-todoist-ai-find-tasks · call/);
+  assert.doesNotMatch(conversation.content, /Result after snapshot/);
+  assert.deepEqual(conversation.entries?.map(({ kind, toolName, start, end }) =>
+    [kind, toolName, conversation.content.slice(start, end)]
+  ), [
+    ['tool-call', 'tool_search_tool', '""'],
+    ['tool-result', 'tool_search_tool', 'Found 1 matching tool(s): doist-todoist-ai-find-tasks'],
+    ['tool-call', 'doist-todoist-ai-find-tasks', '""']
+  ]);
   assert.equal(details.turns[0].toolCalls.find((tool) => tool.name === 'doist-todoist-ai-find-tasks')?.deferred, true);
 });
 
@@ -239,9 +247,12 @@ test('current context uses the rebuilt prompt after resume and both views includ
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-resumed-context-'));
   context.after(() => fs.rm(root, { recursive: true, force: true }));
   const eventPath = path.join(root, 'events.jsonl');
+  const userMessage = 'User message 📎\n\nAssistant · 2026-01-01T10:00:00.000Z\nQuoted header';
+  const attachments = [{ name: 'notes.txt' }];
   const events = [
     { type: 'instruction.update', data: { name: 'runtime', content: 'Initial runtime instruction', postInitial: false } },
     { type: 'system.message', data: { content: 'System prompt<tools><read/></tools><available_skills><skill>A</skill></available_skills><custom_instruction>Common instruction</custom_instruction>' } },
+    { type: 'user.message', data: { content: userMessage, attachments } },
     { type: 'assistant.message', data: { content: 'First answer' } },
     { type: 'session.resume', data: {} },
     { type: 'system.message', data: { content: 'System prompt<tools><read/></tools><available_skills><skill>B</skill></available_skills><custom_instruction>Common instruction</custom_instruction><custom_instruction>New instruction</custom_instruction>' } },
@@ -265,6 +276,12 @@ test('current context uses the rebuilt prompt after resume and both views includ
   assert.equal(current.skills, '<available_skills><skill>B</skill></available_skills>');
   assert.equal(current.instructions, '<custom_instruction>Common instruction</custom_instruction><custom_instruction>New instruction</custom_instruction>\n\nInstruction update: runtime\nInitial runtime instruction\n\nInstruction update: later\nLater runtime instruction');
   assert.match(current.conversation, /First answer/);
+  const entries = overview.currentContextDetails?.find(({ key }) => key === 'conversation')?.entries;
+  assert.deepEqual(entries?.map(({ kind, start, end }) => [kind, current.conversation.slice(start, end)]), [
+    ['user', userMessage],
+    ['attachments', JSON.stringify(attachments, null, 2)],
+    ['assistant', 'First answer']
+  ]);
 });
 
 test('event reader groups assistant iterations under user interactions', async (context) => {

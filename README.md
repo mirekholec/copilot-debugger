@@ -1,8 +1,8 @@
 # Copilot Debugger
 
-**See exactly what each Copilot Agent Host session loads, uses, and reports in AI Credits. 100% local, zero telemetry.**
+**Inspect recorded Copilot Agent Host context, tool calls, and AI Credit usage. 100% local, zero telemetry.**
 
-Copilot Debugger reads local Copilot Agent Host data and shows session context, turns, models, tools, agents, skills, token usage, reported AI Credits, and configurable local cost estimates in a compact web UI. Nothing leaves your machine.
+Copilot Debugger reads local Copilot Agent Host data and shows session context, turns, models, tools, agents, skills, token usage, and reported AI Credits in a compact web UI. Nothing leaves your machine.
 
 <!-- TODO: hero GIF here — 10-15s loop showing: launch `npx copilot-debugger` → session list → open a session → token/cost breakdown. asciinema or GIF, ~800px wide. -->
 <!-- ![Copilot Debugger demo](docs/demo.gif) -->
@@ -34,7 +34,7 @@ npx copilot-debugger
 Copilot Chat is a black box. You don't see what's actually happening inside a session until it's slow, expensive, or both. Copilot Debugger opens that box:
 
 - **A session feels slow or bloated** — see which turns, tools, and agents ate the context window.
-- **You're moving to usage-based billing (AI Credits)** — check reported AIC usage and convert it with your own local rate *before* it hits your invoice.
+- **You're tracking usage-based billing** — check the AI Credits reported for each session and turn.
 - **You want to understand model behavior** — inspect which models ran, what tools they called, and how much each turn cost.
 
 Everything runs on your machine. No account, no cloud, no data leaving your laptop.
@@ -45,7 +45,7 @@ Copilot Debugger reads the shared Copilot Agent Host session store and shows it 
 
 It scans Agent Host storage, normalizes sessions, and displays the context inventory separately from runtime tool usage.
 
-For sessions that persist the required source text, the initial context is split into system prompt, user instructions, agent, skill, tool and MCP definitions, conversation, and other attached context. Each segment can be opened to inspect its contents. Missing catalogs or definitions are shown as unavailable instead of being inferred from runtime calls. The detail view also shows the latest context-window state below the conversation: an explicit compaction/shutdown snapshot includes its category breakdown, while sessions without one use the latest persisted main request total.
+The detail view shows the initial context above the conversation and the latest recorded context below it. Open a segment or its label to inspect the recorded text, with formatted and highlighted XML. Bar widths use character counts. The current panel reports the token total from a compaction or shutdown snapshot, with the latest persisted main request total as a fallback. The recorded text is reconstructed from session events, so it may cover only part of the context sent to the model.
 
 If the event stream is unavailable but `session-store.db` contains `turns`, the detail view reconstructs those user/assistant turns and marks the missing event detail in the session warnings.
 
@@ -128,8 +128,6 @@ Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 | Session list | Session detail |
 | :---: | :---: |
 | [![Session list](docs/cd1.png)](docs/cd1.png) | [![Session detail](docs/cd2.png)](docs/cd2.png) |
-| **Model usage** | |
-| [![Model usage](docs/cd3.png)](docs/cd3.png) | |
 
 ## Architecture
 

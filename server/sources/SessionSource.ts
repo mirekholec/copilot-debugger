@@ -213,10 +213,20 @@ export interface ContextWindowSnapshot {
   source?: 'event' | 'usage';
 }
 
+export interface CurrentContextEntry {
+  kind: 'user' | 'assistant' | 'tool-call' | 'tool-result' | 'attachments';
+  timestamp: string;
+  toolName?: string;
+  /** UTF-16 offsets of the payload within the detail's content. */
+  start: number;
+  end: number;
+}
+
 export interface CurrentContextDetail {
   key: 'tools' | 'system' | 'agents' | 'skills' | 'instructions' | 'conversation';
   label: string;
   content: string;
+  entries?: CurrentContextEntry[];
 }
 
 export interface SessionOverview {
