@@ -798,7 +798,11 @@ function SessionOverviewPanel({ overview }: { overview: SessionOverview }) {
 
   return (
     <div className="session-overview">
-      <InitialPromptBar sizes={overview.contextSizes} messages={overview.initialContextMessages} />
+      <InitialPromptBar
+        sizes={overview.contextSizes}
+        messages={overview.initialContextMessages}
+        currentChars={countCurrentContextChars(overview.currentContextDetails)}
+      />
     </div>
   );
 }
@@ -811,12 +815,16 @@ function CurrentContextPanel({ overview }: { overview: SessionOverview }) {
   );
 }
 
+function countCurrentContextChars(details: CurrentContextDetail[] = []) {
+  return details.reduce((sum, detail) => sum + detail.content.length, 0);
+}
+
 function CurrentContextBar({ snapshot, fallbackModel, details = [] }: {
   snapshot?: ContextWindowSnapshot;
   fallbackModel?: string;
   details?: CurrentContextDetail[];
 }) {
-  const totalChars = details.reduce((sum, detail) => sum + detail.content.length, 0);
+  const totalChars = countCurrentContextChars(details);
   const knownTokens = (snapshot?.toolDefinitionsTokens ?? 0) + (snapshot?.systemTokens ?? 0)
     + (snapshot?.conversationTokens ?? 0);
   const totalTokens = snapshot?.currentTokens ?? (knownTokens > 0 ? knownTokens : undefined);
@@ -838,7 +846,7 @@ function CurrentContextBar({ snapshot, fallbackModel, details = [] }: {
       {totalChars > 0 ? (
         <ContextBreakdown
           label="Current context by recorded character count"
-          total={totalChars}
+          scaleChars={totalChars}
           items={details.map((detail) => ({ ...detail, id: detail.key, chars: detail.content.length }))}
         />
       ) : (
@@ -859,7 +867,11 @@ const initialContextOrder: Record<InitialContextSectionKey | 'user', number> = {
   user: 5
 };
 
-function InitialPromptBar({ sizes, messages }: { sizes: ContextSizes; messages: InitialContextMessage[] }) {
+function InitialPromptBar({ sizes, messages, currentChars }: {
+  sizes: ContextSizes;
+  messages: InitialContextMessage[];
+  currentChars: number;
+}) {
   const visibleMessages = messages.filter((message) => message.chars > 0);
   const total = visibleMessages.reduce((sum, message) => sum + message.chars, 0);
   const systemCount = visibleMessages.filter((message) => message.type === 'system').length;
@@ -882,7 +894,7 @@ function InitialPromptBar({ sizes, messages }: { sizes: ContextSizes; messages: 
         {sizes.model && <span className="ctx-window-model">{sizes.model}</span>}
         <span className="ctx-window-usage">{formatChars(total)} raw text</span>
       </div>
-      <ContextBreakdown label="Initial context by character count" total={total} items={items} />
+      <ContextBreakdown label="Initial context by character count" scaleChars={Math.max(total, currentChars)} items={items} />
     </div>
   );
 }
@@ -895,9 +907,9 @@ interface ContextBreakdownItem<Key extends string = string> {
   content: string;
 }
 
-function ContextBreakdown({ label, total, items }: {
+function ContextBreakdown({ label, scaleChars, items }: {
   label: string;
-  total: number;
+  scaleChars: number;
   items: ContextBreakdownItem[];
 }) {
   const contentId = useId();
@@ -913,7 +925,7 @@ function ContextBreakdown({ label, total, items }: {
             type="button"
             key={item.id}
             className={`ctx-seg ctx-seg--${item.key}`}
-            style={{ width: total > 0 ? `${(item.chars / total) * 100}%` : '0%' }}
+            style={{ width: scaleChars > 0 ? `${(item.chars / scaleChars) * 100}%` : '0%' }}
             title={`${item.label}: ${formatChars(item.chars)}`}
             aria-label={item.label}
             aria-expanded={selected === item.id}
