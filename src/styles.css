@@ -262,19 +262,25 @@ h1 {
 }
 
 .back-link {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   justify-self: start;
-  padding: 0;
-  border: 0;
+  min-height: 32px;
+  padding: 0 10px 0 8px;
+  border: 1px solid var(--control-border);
+  border-radius: 8px;
   background: transparent;
-  color: var(--accent);
-  font-size: 0.9rem;
+  color: var(--secondary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .back-link:hover {
-  text-decoration: underline;
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
 }
 
 .state-message {
@@ -517,19 +523,22 @@ h1 {
 .turns-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 5px;
   min-height: 24px;
+  margin-inline-start: auto;
   padding: 0.18rem 0.48rem 0.18rem 0.36rem;
   border: 1px solid rgba(37, 83, 163, 0.22);
   border-radius: 6px;
-  background: rgba(37, 83, 163, 0.07);
+  background: var(--accent-bg);
   color: var(--accent);
   font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
-.turns-toggle:hover {
-  border-color: rgba(37, 83, 163, 0.42);
-  color: var(--accent);
+.turns-toggle:hover,
+.turns-toggle[aria-expanded="true"] {
+  border-color: var(--accent);
 }
 
 .turn-activity {

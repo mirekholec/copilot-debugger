@@ -279,6 +279,7 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
   const usedAgents = new Set<string>();
   const systemMessages: string[] = [];
   const initialContextMessages: InitialContextMessage[] = [];
+  const initialInstructionUpdates: string[] = [];
   let assistantResponseStarted = false;
   let initialAttachmentChars = 0;
   let initialAttachmentContent = '';
@@ -486,6 +487,11 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
       continue;
     }
 
+    if (event.type === 'instruction.update' && !assistantResponseStarted && data.postInitial !== true) {
+      const update = formatInstructionUpdate(data);
+      if (update) initialInstructionUpdates.push(update);
+    }
+
     if (event.type === 'system.message') {
       const content = textValue(data.content);
       if (content) {
@@ -555,6 +561,29 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
 
   for (const tool of toolById.values()) {
     tool.deferred = deferredTools.has(tool.name);
+  }
+
+  if (initialInstructionUpdates.length) {
+    const content = initialInstructionUpdates.join('\n\n');
+    const systemMessage = initialContextMessages.find((message) => message.type === 'system');
+    if (systemMessage) {
+      const suffix = '\n\n' + content;
+      const sections = systemMessage.sections ?? (systemMessage.sections = []);
+      const section = sections.find((item) => item.key === 'instructions');
+      if (section) {
+        section.content += suffix;
+        section.chars = section.content.length;
+      } else {
+        sections.push({ key: 'instructions', label: 'Instructions', chars: suffix.length, content: suffix });
+      }
+      systemMessage.content += suffix;
+      systemMessage.chars = systemMessage.content.length;
+    } else {
+      initialContextMessages.push({
+        id: 'initial-instruction-updates', type: 'system', label: 'System message', content, chars: content.length,
+        sections: [{ key: 'instructions', label: 'Instructions', content, chars: content.length }]
+      });
+    }
   }
 
   const systemPrompt = systemMessages[0] ?? '';
@@ -660,6 +689,7 @@ function readCurrentContextDetails(events: AgentHostEvent[], capturedAt?: string
   const { tools, instructions, conversation } = sections;
   const toolNames = new Map<string, string>();
   const discoveredTools = new Set<string>();
+  let systemPrompt: string | undefined;
   let reportedTools: string | undefined;
   for (const { type, data, timestamp } of events) {
     if (!timestamp || !(Date.parse(timestamp) <= cutoff)) continue;
@@ -669,12 +699,11 @@ function readCurrentContextDetails(events: AgentHostEvent[], capturedAt?: string
       break;
     }
     if (type === 'system.message') {
-      for (const section of splitSystemContext(textValue(data.content) ?? '')) {
-        sections[section.key === 'other' ? 'system' : section.key].push(section.content);
-      }
+      // A new system message records the rebuilt prompt, for example after a resume.
+      systemPrompt = textValue(data.content) || systemPrompt;
     } else if (type === 'instruction.update') {
-      const content = textValue(data.content);
-      if (content) instructions.push(`Instruction update: ${stringValue(data.name) ?? 'unnamed'}\n${content}`);
+      const update = formatInstructionUpdate(data);
+      if (update) instructions.push(update);
     } else if (type === 'user.message' || type === 'assistant.message') {
       const content = (type === 'user.message' ? textValue(data.transformedContent) : undefined) ?? textValue(data.content);
       if (content) conversation.push(`${type === 'user.message' ? 'User' : 'Assistant'} · ${timestamp}\n${content}`);
@@ -700,6 +729,11 @@ function readCurrentContextDetails(events: AgentHostEvent[], capturedAt?: string
     }
   }
 
+  if (systemPrompt) {
+    for (const section of splitSystemContext(systemPrompt)) {
+      sections[section.key === 'other' ? 'system' : section.key].unshift(section.content);
+    }
+  }
   if (discoveredTools.size) tools.unshift(`Tools found by tool search\n${[...discoveredTools].sort().join('\n')}`);
   if (reportedTools) tools.unshift(reportedTools);
 
@@ -712,6 +746,11 @@ function readCurrentContextDetails(events: AgentHostEvent[], capturedAt?: string
     { key: 'conversation', label: 'Messages and tool calls', content: conversation.join('\n\n') }
   ];
   return details.filter((detail) => detail.content);
+}
+
+function formatInstructionUpdate(data: Record<string, unknown>): string | undefined {
+  const content = textValue(data.content);
+  return content ? `Instruction update: ${stringValue(data.name) ?? 'unnamed'}\n${content}` : undefined;
 }
 
 export function createUsageContextSnapshot(usage: AgentHostUsageRow[]): ContextWindowSnapshot | undefined {

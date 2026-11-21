@@ -454,6 +454,11 @@ export default function App() {
   if (detailSessionId) {
     const aiCredits = detailSession?.cost.aiCredits;
     const warnings = detailSession?.dataCompleteness?.warnings ?? [];
+    const titleChars = Array.from(detailSession?.firstUserMessage || 'Session detail');
+    const titleLimit = 70;
+    const title = titleChars.length > titleLimit
+      ? titleChars.slice(0, titleLimit - 1).join('') + '…'
+      : titleChars.join('');
     return (
       <main className="app-shell">
         <header className="session-heading">
@@ -462,7 +467,7 @@ export default function App() {
               <ArrowLeft size={15} aria-hidden="true" />
               Sessions
             </button>
-            <h1>{detailSession?.firstUserMessage || 'Session detail'}</h1>
+            <h1>{title}</h1>
             <div className="cost-summary-pill">
               <Coins size={14} aria-hidden="true" />
               {aiCredits !== undefined
@@ -696,13 +701,13 @@ function TurnCard({ turn }: { turn: TurnInfo }) {
             );
           })}
           {turn.hasBrowserContext && <span className="browser-chip" title="Contains Attached Element Context">🌐 browser</span>}
-          {hasActivity && (
-            <button type="button" className="turns-toggle" aria-expanded={showTurns} onClick={() => setShowTurns((v) => !v)}>
-              {showTurns ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}
-              {showTurns ? 'Hide turns' : 'Show turns'}
-            </button>
-          )}
         </div>
+        {hasActivity && (
+          <button type="button" className="turns-toggle" aria-expanded={showTurns} onClick={() => setShowTurns((v) => !v)}>
+            {showTurns ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}
+            {showTurns ? 'Hide turns' : 'Show turns'}
+          </button>
+        )}
       </div>
       {hasActivity && showTurns && (
         <div className="turn-activity">

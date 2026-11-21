@@ -235,6 +235,38 @@ test('current context shows recorded tool discovery and excludes later tool resu
   assert.equal(details.turns[0].toolCalls.find((tool) => tool.name === 'doist-todoist-ai-find-tasks')?.deferred, true);
 });
 
+test('current context uses the rebuilt prompt after resume and both views include initial runtime instructions', async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-resumed-context-'));
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  const eventPath = path.join(root, 'events.jsonl');
+  const events = [
+    { type: 'instruction.update', data: { name: 'runtime', content: 'Initial runtime instruction', postInitial: false } },
+    { type: 'system.message', data: { content: 'System prompt<tools><read/></tools><available_skills><skill>A</skill></available_skills><custom_instruction>Common instruction</custom_instruction>' } },
+    { type: 'assistant.message', data: { content: 'First answer' } },
+    { type: 'session.resume', data: {} },
+    { type: 'system.message', data: { content: 'System prompt<tools><read/></tools><available_skills><skill>B</skill></available_skills><custom_instruction>Common instruction</custom_instruction><custom_instruction>New instruction</custom_instruction>' } },
+    { type: 'instruction.update', data: { name: 'later', content: 'Later runtime instruction', postInitial: true } },
+    { type: 'session.shutdown', data: { currentTokens: 100 } },
+    { type: 'system.message', data: { content: 'Prompt logged after snapshot' } }
+  ];
+  await fs.writeFile(eventPath, events.map((event, index) =>
+    JSON.stringify({ ...event, timestamp: `2026-01-01T10:00:0${index}.000Z` })
+  ).join('\n') + '\n');
+
+  const { overview } = await new AgentHostEventReader().readDetails(eventPath, []);
+  const initial = overview.initialContextMessages?.[0];
+  assert.equal(initial?.sections?.reduce((sum, section) => sum + section.chars, 0), initial?.chars);
+  const initialInstructions = initial?.sections?.find(({ key }) => key === 'instructions')?.content;
+  assert.equal(initialInstructions, '<custom_instruction>Common instruction</custom_instruction>\n\nInstruction update: runtime\nInitial runtime instruction');
+
+  const current = Object.fromEntries((overview.currentContextDetails ?? []).map(({ key, content }) => [key, content]));
+  assert.equal(current.system, 'System prompt');
+  assert.equal(current.tools, '<tools><read/></tools>');
+  assert.equal(current.skills, '<available_skills><skill>B</skill></available_skills>');
+  assert.equal(current.instructions, '<custom_instruction>Common instruction</custom_instruction><custom_instruction>New instruction</custom_instruction>\n\nInstruction update: runtime\nInitial runtime instruction\n\nInstruction update: later\nLater runtime instruction');
+  assert.match(current.conversation, /First answer/);
+});
+
 test('event reader groups assistant iterations under user interactions', async (context) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-rounds-'));
   context.after(() => fs.rm(root, { recursive: true, force: true }));
