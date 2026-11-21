@@ -852,6 +852,7 @@ h1 {
   border: 0;
   border-radius: 0;
   cursor: pointer;
+  background: var(--ctx-section-color, transparent);
 }
 
 .ctx-window-empty {
@@ -870,16 +871,39 @@ h1 {
   z-index: 1;
 }
 
-.ctx-seg--system       { background: rgba(167, 243, 208, 0.65); }
-.ctx-seg--instructions { background: rgba(244, 114, 182, 0.70); }
-.ctx-seg--agents       { background: rgba(147, 197, 253, 0.75); }
-.ctx-seg--skills       { background: rgba(227, 160, 126, 0.85); }
-.ctx-seg--tools        { background: rgba(196, 181, 253, 0.70); }
-.ctx-seg--mcp          { background: rgba(103, 232, 249, 0.70); }
-.ctx-seg--conversation { background: rgba(253, 224, 71, 0.70); }
-.ctx-seg--user         { background: rgba(253, 224, 71, 0.70); }
-.ctx-seg--other        { background: rgba(148, 163, 184, 0.65); }
-.ctx-seg--empty   { background: transparent; }
+.ctx-seg--tools,
+.ctx-legend-item--tools {
+  --ctx-section-color: #8b2635;
+}
+
+.ctx-seg--system,
+.ctx-seg--other,
+.ctx-legend-item--system,
+.ctx-legend-item--other {
+  --ctx-section-color: #183a72;
+}
+
+.ctx-seg--skills,
+.ctx-legend-item--skills {
+  --ctx-section-color: #609ef0;
+}
+
+.ctx-seg--instructions,
+.ctx-legend-item--instructions {
+  --ctx-section-color: #008ebd;
+}
+
+.ctx-seg--conversation,
+.ctx-seg--user,
+.ctx-legend-item--conversation,
+.ctx-legend-item--user {
+  --ctx-section-color: #e5b422;
+}
+
+.ctx-seg--agents,
+.ctx-legend-item--agents {
+  --ctx-section-color: #137f75;
+}
 
 .ctx-legend {
   display: flex;
@@ -902,17 +926,8 @@ h1 {
   height: 8px;
   border-radius: 2px;
   flex-shrink: 0;
+  background: var(--ctx-section-color, transparent);
 }
-
-.ctx-legend-item--system       .ctx-legend-dot { background: rgba(167, 243, 208, 0.8); }
-.ctx-legend-item--instructions .ctx-legend-dot { background: rgba(244, 114, 182, 0.9); }
-.ctx-legend-item--agents       .ctx-legend-dot { background: rgba(147, 197, 253, 0.9); }
-.ctx-legend-item--skills       .ctx-legend-dot { background: rgba(227, 160, 126, 1); }
-.ctx-legend-item--tools        .ctx-legend-dot { background: rgba(196, 181, 253, 0.9); }
-.ctx-legend-item--mcp          .ctx-legend-dot { background: rgba(103, 232, 249, 0.9); }
-.ctx-legend-item--conversation .ctx-legend-dot { background: rgba(253, 224, 71, 0.9); }
-.ctx-legend-item--user         .ctx-legend-dot { background: rgba(253, 224, 71, 0.9); }
-.ctx-legend-item--other        .ctx-legend-dot { background: rgba(148, 163, 184, 0.85); }
 
 button.ctx-legend-item {
   padding: 0;
