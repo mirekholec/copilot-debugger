@@ -20,6 +20,7 @@ npx copilot-debugger
 
 - [Why](#why)
 - [What It Is](#what-it-is)
+- [Features](#features)
 - [Installation](#installation)
 - [Changelog](#changelog)
 - [Troubleshooting](#troubleshooting)
@@ -43,11 +44,7 @@ Everything runs on your machine. No account, no cloud, no data leaving your lapt
 
 Copilot Debugger reads the shared Copilot Agent Host session store and shows it in a compact web UI.
 
-It scans Agent Host storage, normalizes sessions, and displays the context inventory separately from runtime tool usage.
-
-The detail view shows the initial context above the conversation and the latest recorded context below it. Open a segment or its label to inspect the recorded text, with formatted and highlighted XML. Bar widths use character counts. The current panel reports the token total from a compaction or shutdown snapshot, with the latest persisted main request total as a fallback. The recorded text is reconstructed from session events, so it may cover only part of the context sent to the model.
-
-If the event stream is unavailable but `session-store.db` contains `turns`, the detail view reconstructs those user/assistant turns and marks the missing event detail in the session warnings.
+It scans Agent Host storage, normalizes sessions, and displays the context inventory separately from runtime tool usage. The recorded text is reconstructed from session events, so it may cover only part of the context sent to the model.
 
 **Privacy:** The app does not send your data anywhere. It reads files from your machine and serves the UI locally. It does not call GitHub, Microsoft, Copilot, or any external analytics API.
 
@@ -60,6 +57,27 @@ Default data sources:
 - `~/.copilot/logs/process-*.log` for MCP servers initialized when the session starts
 
 The Agent Host database is opened read-only with WAL support. Session lists use the compact database and YAML metadata; large event streams are parsed only when a detail is opened. Unknown or malformed events are skipped without hiding the rest of the session.
+
+## Features
+
+### Session list
+
+- Sessions sorted by last update, with the first user message, workspace, and reported AI Credits.
+- Search by message, session ID, workspace, client, or repository; filter by workspace and date range. The date range defaults to the current month, and filters persist for the browser session.
+- Every session has its own URL (`/sessions/<id>`), so you can open it in a new tab or reload it directly.
+- Sessions that contain only harness commands (for example `/env`) with no model activity are hidden.
+- The list refreshes automatically while new sessions are recorded.
+
+### Session detail
+
+- **Header** with the first message, total AI Credits for the session, and warnings about missing or incomplete data.
+- **Initial context window** - one bar split into tools, system message, agents, skills, instructions, and the user message. Click a segment or its legend label to open the recorded text, with formatted and highlighted XML.
+- **Tool payloads** - calls and raw input/output characters per tool. Tools with at least 20% of the total input or output are highlighted, and deferred tools are marked.
+- **Conversation** - one card per user interaction with AI Credits, input/output/cached tokens, the number of model calls, models (reasoning effort on hover), and a badge for attached browser context. **Show turns** expands each model call with its tool calls and argument summaries such as files, commands, search patterns, skills, and documentation queries. Subagent turns are nested under the tool call that started them, and tools returned by `tool_search_tool` are listed.
+- **Current context window** - the latest recorded state on the same scale as the initial context, so both bars can be compared directly. The token total comes from a compaction or shutdown snapshot, with the latest persisted main request as a fallback. After a session resumes, the latest system prompt is used.
+- **Messages and tool calls** - open this segment of the current context to browse a timeline of user and assistant messages, tool calls, tool results, and attachments. Each entry has a timestamp and previous/next buttons.
+
+If the event stream is unavailable but `session-store.db` contains `turns`, the detail view reconstructs those user/assistant turns and marks the missing event detail in the session warnings.
 
 ## Installation
 
@@ -74,6 +92,8 @@ Run the published package:
 npx copilot-debugger
 ```
 
+The server listens on `http://127.0.0.1:4317` and opens the UI in your default browser. It accepts only loopback requests.
+
 Local development:
 
 ```bash
@@ -81,7 +101,7 @@ npm install
 npm run dev
 ```
 
-Default local URLs:
+Development URLs:
 
 - Web UI: `http://127.0.0.1:5173`
 - API: `http://127.0.0.1:4317`
@@ -93,14 +113,16 @@ npm run typecheck
 npm test
 npm run build
 npm run start
+npm run stop
 ```
 
 Optional environment variables:
 
-- `PORT` - backend port
+- `PORT` - backend port (default `4317`)
 - `COPILOT_DEBUGGER_AGENT_ROOT` - custom Copilot Agent Host root (default `~/.copilot`)
 - `COPILOT_DEBUGGER_CUSTOMIZATIONS_ROOT` - custom VS Code Agent Host customization snapshot root
-- `SESSION_POLL_INTERVAL_MS` - fallback refresh interval
+- `COPILOT_DEBUGGER_OPEN` - set to `0` to stop `npx copilot-debugger` from opening the browser
+- `SESSION_POLL_INTERVAL_MS` - fallback refresh interval when file watching misses a change (default `30000`)
 
 Example:
 
@@ -114,7 +136,7 @@ Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 
 ## Troubleshooting
 
-- No sessions are shown: check `~/.copilot/session-state` and `~/.copilot/session-store.db`.
+- No sessions are shown: check the date range first, because it defaults to the current month. Then check `~/.copilot/session-state` and `~/.copilot/session-store.db`.
 - Wrong Agent Host location: set `COPILOT_DEBUGGER_AGENT_ROOT` explicitly.
 - Session shows incomplete data: the event stream or `session-store.db` may be absent, locked, or from a newer internal schema. Available data remains visible and the UI shows a warning.
 - Port is already used: set `PORT`, for example `PORT=4321 npm run dev`.
@@ -123,11 +145,21 @@ Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 
 ## Screenshots
 
-<!-- TODO: consider replacing static shots with a short GIF per view, or at least bump these to full-width. Drop the placeholder cell below. -->
+**Session list** - search, workspace and date filters, AI Credits per session.
 
-| Session list | Session detail |
-| :---: | :---: |
-| [![Session list](docs/cd1.png)](docs/cd1.png) | [![Session detail](docs/cd2.png)](docs/cd2.png) |
+[![Session list](docs/cd1.png)](docs/cd1.png)
+
+**Session detail** - initial context window, tool payloads, and a conversation card with its model calls and tool calls expanded.
+
+[![Session detail](docs/cd2.png)](docs/cd2.png)
+
+**Context inspection** - an opened context segment with formatted XML.
+
+[![Initial context segment](docs/cd3.png)](docs/cd3.png)
+
+**Current context** - the latest recorded context with the timeline of messages, tool calls, and tool results.
+
+[![Current context timeline](docs/cd4.png)](docs/cd4.png)
 
 ## Architecture
 
