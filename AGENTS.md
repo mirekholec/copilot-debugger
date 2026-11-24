@@ -45,7 +45,9 @@
 ## Frontend Principles
 
 - The UI is a working tool, not a landing page.
-- Preserve the dark visual style.
+- The app has a single light theme; do not add a dark theme.
+- Use the design tokens (CSS variables) in `src/styles.css`; avoid hard-coded colors.
+- Fonts are Geist and Geist Mono, bundled via `@fontsource-variable`; do not load fonts from a CDN.
 - Use a compact layout for scanning data.
 - Use icons from `lucide-react`.
 - Keep filters and selection client-side as long as the data volume remains small.
@@ -73,6 +75,5 @@
 - Make small, focused changes.
 - Do not add a new abstraction without a clear reason.
 - Do not broadly rewrite the UI for a small change.
-- Do not use white/light containers; the project is dark.
 - Keep TypeScript strict and avoid `any` when a reasonable alternative exists.
 - Do not revert or delete user changes outside the current task.

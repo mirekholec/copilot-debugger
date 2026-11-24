@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, ChevronRight, Clock3, Coins, Filter, RefreshCw, Search } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, ChevronRight, Clock3, Coins, Filter, Globe, RefreshCw, Search } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { ContextCompaction, CurrentContextDetail, CurrentContextEntry } from '../server/sources/SessionSource';
 import { ContextContent } from './ContextContent';
@@ -769,7 +769,7 @@ function TurnCard({ turn }: { turn: TurnInfo }) {
               </span>
             );
           })}
-          {turn.hasBrowserContext && <span className="browser-chip" title="Contains Attached Element Context">🌐 browser</span>}
+          {turn.hasBrowserContext && <span className="browser-chip" title="Contains Attached Element Context"><Globe size={11} aria-hidden="true" />browser</span>}
         </div>
         {hasActivity && (
           <button type="button" className="turns-toggle" aria-expanded={showTurns} onClick={() => setShowTurns((v) => !v)}>
