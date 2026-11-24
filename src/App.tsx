@@ -433,6 +433,11 @@ export default function App() {
     });
   }, [workspaceFilter, query, sessions, dateFrom, dateTo]);
 
+  const totalAiCredits = useMemo(() => {
+    const values = filteredSessions.flatMap((session) => session.cost.aiCredits === undefined ? [] : [session.cost.aiCredits]);
+    return values.length ? values.reduce((sum, value) => sum + value, 0) : undefined;
+  }, [filteredSessions]);
+
   const detailSession = sessions.find((s) => s.id === detailSessionId);
 
   if (apiConnecting) {
@@ -546,6 +551,17 @@ export default function App() {
               <span>Session</span>
               <span>Updated</span>
               <span>AI credits</span>
+            </div>
+            <div className="session-total">
+              <span>Total</span>
+              <span className="session-total-credits">
+                {totalAiCredits === undefined ? '—' : (
+                  <>
+                    {formatWholeNumber(totalAiCredits)} AIC
+                    <small>{formatUsd(totalAiCredits / 100)}</small>
+                  </>
+                )}
+              </span>
             </div>
             <ul className="session-list" role="list">
               {filteredSessions.map((session) => (
@@ -1060,4 +1076,12 @@ function formatNumber(value: number) {
 
 function formatAic(value: number) {
   return value.toFixed(2);
+}
+
+function formatWholeNumber(value: number) {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
+}
+
+function formatUsd(value: number) {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0, minimumFractionDigits: 0 }).format(value);
 }

@@ -246,6 +246,31 @@ h1 {
   color: var(--accent);
 }
 
+.session-total {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px calc(12px + 1rem + 12px) 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--subtle);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.session-total-credits {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.session-total-credits small {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
 .session-heading {
   display: grid;
   gap: 8px;
