@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-24
+
+### Added
+
+- Show a title for each session, taken from the workspace name or the session summary. Titles are included in search and on the detail page.
+- Show a total row with the summed AI Credits, the USD equivalent, and the session count for the filtered sessions.
+- Select multiple workspaces in the filter. The selection is stored in `localStorage`.
+- Add a favicon and show it as a logo beside the app title.
+
+### Changed
+
+- Switch the interface to a single light theme with bundled Geist and Geist Mono fonts, and update the design tokens.
+- Update the context bar colour palette.
+
 ## [1.1.0] - 2026-11-24
 
 ### Added
@@ -99,7 +113,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expanded the project documentation and npm package overview.
 - Added configurable polling through `SESSION_POLL_INTERVAL_MS`.
 
-[Unreleased]: https://github.com/mirekholec/copilot-debugger/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/mirekholec/copilot-debugger/compare/v1.2.0...HEAD
+[1.2.0]: https://www.npmjs.com/package/copilot-debugger/v/1.2.0
 [1.1.0]: https://www.npmjs.com/package/copilot-debugger/v/1.1.0
 [1.0.0]: https://www.npmjs.com/package/copilot-debugger/v/1.0.0
 [0.2.2]: https://www.npmjs.com/package/copilot-debugger/v/0.2.2
