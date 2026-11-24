@@ -511,7 +511,10 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="list-toolbar">
-        <h1>Copilot Debugger</h1>
+        <h1>
+          <img className="app-logo" src="/favicon.svg" alt="" width={24} height={24} />
+          Copilot Debugger
+        </h1>
         <div className="filters" role="group" aria-label="Session filters">
           <label className="search-box">
             <Search size={17} aria-hidden="true" />

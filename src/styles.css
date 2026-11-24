@@ -65,8 +65,13 @@ h1 {
 
 .list-toolbar h1 {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
+}
+
+.app-logo {
+  flex: none;
+  display: block;
 }
 
 .filters,
