@@ -20,6 +20,7 @@ interface NormalizedSession {
   producer: string;
   copilotVersion?: string;
   vscodeVersion?: string;
+  title?: string;
   firstUserMessage?: string;
   agents: string[];
   tools: string[];
@@ -422,7 +423,7 @@ export default function App() {
       if (fromDate && updatedAt < fromDate) return false;
       if (toDate && updatedAt > toDate) return false;
       const matchesQuery = normalizedQuery
-        ? [session.id, session.workspaceStorageId, session.workspaceName, session.firstUserMessage, session.producer, session.clientName, session.repository]
+        ? [session.id, session.workspaceStorageId, session.workspaceName, session.title, session.firstUserMessage, session.producer, session.clientName, session.repository]
             .filter(Boolean)
             .some((value) => value?.toLowerCase().includes(normalizedQuery))
         : true;
@@ -450,7 +451,7 @@ export default function App() {
   if (detailSessionId) {
     const aiCredits = detailSession?.cost.aiCredits;
     const warnings = detailSession?.dataCompleteness?.warnings ?? [];
-    const titleChars = Array.from(detailSession?.firstUserMessage || 'Session detail');
+    const titleChars = Array.from(detailSession?.title || detailSession?.firstUserMessage || 'Session detail');
     const titleLimit = 70;
     const title = titleChars.length > titleLimit
       ? titleChars.slice(0, titleLimit - 1).join('') + '…'
@@ -559,7 +560,7 @@ export default function App() {
                     }}
                   >
                     <span className="session-title">
-                      <strong>{session.firstUserMessage || 'Untitled session'}</strong>
+                      <strong>{session.title || session.firstUserMessage || 'Untitled session'}</strong>
                       <small>{session.workspaceName ?? session.workspaceStorageId}</small>
                     </span>
                     <time className="session-date" dateTime={session.updatedAt}>{formatDateTime(session.updatedAt)}</time>

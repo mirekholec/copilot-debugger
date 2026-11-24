@@ -19,6 +19,7 @@ interface CopilotAgentHostSourceOptions {
 interface WorkspaceMetadata {
   id?: string;
   cwd?: string;
+  name?: string;
   summary?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -211,6 +212,7 @@ export class CopilotAgentHostSource implements SessionSource {
       updatedAt,
       producer: header.producer ?? 'Copilot Agent Host',
       copilotVersion: header.copilotVersion,
+      title: workspace?.name ?? dbSession?.summary,
       firstUserMessage: dbSession?.firstUserMessage ?? workspace?.summary ?? header.firstUserMessage ?? dbSession?.summary,
       messageCount: dbSession?.messageCount ?? 0,
       userTurnCount: dbSession?.turnCount ?? 0,
@@ -438,6 +440,7 @@ async function readWorkspaceMetadata(filePath: string): Promise<WorkspaceMetadat
     return {
       id: stringValue(parsed.id),
       cwd: stringValue(parsed.cwd),
+      name: stringValue(parsed.name),
       summary: stringValue(parsed.summary),
       createdAt: isoValue(parsed.created_at ?? parsed.createdAt),
       updatedAt: isoValue(parsed.updated_at ?? parsed.updatedAt),

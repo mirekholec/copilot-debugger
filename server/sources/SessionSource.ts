@@ -56,6 +56,7 @@ export interface NormalizedSession {
   producer: string;
   copilotVersion?: string;
   vscodeVersion?: string;
+  title?: string;
   firstUserMessage?: string;
   messageCount: number;
   userTurnCount: number;

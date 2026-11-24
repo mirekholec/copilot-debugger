@@ -45,7 +45,7 @@ app.get('/api/sessions', (request, response) => {
 
   const sessions = snapshot.sessions.filter((session) => {
     const matchesQuery = q
-      ? [session.id, session.workspaceStorageId, session.firstUserMessage, session.producer, session.clientName, session.repository]
+      ? [session.id, session.workspaceStorageId, session.title, session.firstUserMessage, session.producer, session.clientName, session.repository]
           .filter(Boolean)
           .some((value) => value?.toLowerCase().includes(q))
       : true;

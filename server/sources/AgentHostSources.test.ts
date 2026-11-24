@@ -558,6 +558,7 @@ test('Agent Host source discovers directory and root JSONL generations lazily', 
   assert.equal(snapshot.sessions.length, 2);
   assert.equal(fixture?.sourceKind, 'copilot-agent-host');
   assert.equal(fixture?.clientName, 'vscode-agent-host');
+  assert.equal(fixture?.title, 'Fixture title');
   assert.equal(fixture?.cost.aiCredits, 0.6);
   assert.equal((await source.getSessionTurns('fixture-session')).length, 1);
   assert.deepEqual((await source.getSessionOverview('fixture-session'))?.agents.map((agent) => agent.name), ['fixture-agent']);
