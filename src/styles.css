@@ -843,6 +843,15 @@ h1 {
   margin-left: auto;
 }
 
+.ctx-window-meta {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.ctx-window + .ctx-window {
+  margin-top: 16px;
+}
+
 .ctx-bar {
   display: flex;
   width: 100%;
@@ -1085,6 +1094,7 @@ button.ctx-legend-item:hover {
 .ctx-entry--assistant { --entry-accent: #21684e; }
 .ctx-entry--tool-call { --entry-accent: #8b2635; }
 .ctx-entry--tool-result { --entry-accent: #75438f; }
+.ctx-entry--summary { --entry-accent: #e5b422; }
 
 .ctx-entry-header {
   display: flex;

@@ -1,6 +1,6 @@
 {
   "name": "copilot-debugger",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": false,
   "description": "Copilot Debugger is a local viewer for Copilot Agent Host sessions, context, tools, agents, skills, tokens, and costs.",
   "type": "module",

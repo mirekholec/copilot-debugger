@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, ChevronRight, Clock3, Coins, Filter, RefreshCw, Search } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import type { CurrentContextDetail, CurrentContextEntry } from '../server/sources/SessionSource';
+import type { ContextCompaction, CurrentContextDetail, CurrentContextEntry } from '../server/sources/SessionSource';
 import { ContextContent } from './ContextContent';
 
 interface NormalizedSession {
@@ -177,7 +177,7 @@ interface ContextWindowSnapshot {
   toolDefinitionsTokens?: number;
   model?: string;
   capturedAt?: string;
-  source?: 'event' | 'usage';
+  source?: 'event' | 'usage' | 'compaction';
 }
 
 interface SessionOverview {
@@ -196,6 +196,7 @@ interface SessionOverview {
   initialContextMessages?: InitialContextMessage[];
   finalContext?: ContextWindowSnapshot;
   currentContextDetails?: CurrentContextDetail[];
+  lastCompaction?: ContextCompaction;
 }
 
 const SESSION_ROUTE_PREFIX = '/sessions/';
@@ -801,52 +802,88 @@ function SessionOverviewPanel({ overview }: { overview: SessionOverview }) {
       <InitialPromptBar
         sizes={overview.contextSizes}
         messages={overview.initialContextMessages}
-        currentChars={countCurrentContextChars(overview.currentContextDetails)}
+        scaleChars={contextScaleChars(overview)}
       />
     </div>
   );
 }
 
 function CurrentContextPanel({ overview }: { overview: SessionOverview }) {
+  const compaction = overview.lastCompaction;
+  const fallbackModel = overview.contextSizes?.model;
+  const scaleChars = contextScaleChars(overview);
+
   return (
     <div className="session-overview session-overview--current">
-      <CurrentContextBar snapshot={overview.finalContext} fallbackModel={overview.contextSizes?.model} details={overview.currentContextDetails} />
+      {compaction && (
+        <CurrentContextBar
+          label="Context window · before compact"
+          meta={formatCompaction(compaction)}
+          snapshot={compaction.before}
+          fallbackModel={fallbackModel}
+          details={compaction.beforeDetails}
+          scaleChars={scaleChars}
+        />
+      )}
+      <CurrentContextBar snapshot={overview.finalContext} fallbackModel={fallbackModel} details={overview.currentContextDetails} scaleChars={scaleChars} />
     </div>
   );
+}
+
+function formatCompaction({ completedAt, trigger, messagesRemoved }: ContextCompaction) {
+  return [
+    `Compacted ${formatDateTime(completedAt)}`,
+    trigger,
+    messagesRemoved !== undefined ? `${formatNumber(messagesRemoved)} messages removed` : undefined
+  ].filter(Boolean).join(' · ');
 }
 
 function countCurrentContextChars(details: CurrentContextDetail[] = []) {
   return details.reduce((sum, detail) => sum + detail.content.length, 0);
 }
 
-function CurrentContextBar({ snapshot, fallbackModel, details = [] }: {
+/** All context bars share one scale so they can be compared directly. */
+function contextScaleChars(overview: SessionOverview) {
+  return Math.max(
+    (overview.initialContextMessages ?? []).reduce((sum, message) => sum + message.chars, 0),
+    countCurrentContextChars(overview.currentContextDetails),
+    countCurrentContextChars(overview.lastCompaction?.beforeDetails)
+  );
+}
+
+function CurrentContextBar({ label = 'Context window · current', meta, snapshot, fallbackModel, details = [], scaleChars }: {
+  label?: string;
+  meta?: string;
   snapshot?: ContextWindowSnapshot;
   fallbackModel?: string;
   details?: CurrentContextDetail[];
+  scaleChars?: number;
 }) {
   const totalChars = countCurrentContextChars(details);
   const knownTokens = (snapshot?.toolDefinitionsTokens ?? 0) + (snapshot?.systemTokens ?? 0)
     + (snapshot?.conversationTokens ?? 0);
   const totalTokens = snapshot?.currentTokens ?? (knownTokens > 0 ? knownTokens : undefined);
+  const estimated = snapshot?.source !== 'usage';
   const snapshotTitle = snapshot?.capturedAt
-    ? `Last context snapshot: ${formatDateTime(snapshot.capturedAt)}`
+    ? `${estimated ? 'Local estimate' : 'Last model request'}: ${formatDateTime(snapshot.capturedAt)}`
     : undefined;
 
   return (
     <div className="ctx-window">
       <div className="ctx-window-header">
-        <span className="ctx-window-label">Context window · current</span>
+        <span className="ctx-window-label">{label}</span>
         {(snapshot?.model ?? fallbackModel) && <span className="ctx-window-model">{snapshot?.model ?? fallbackModel}</span>}
+        {meta && <span className="ctx-window-meta">{meta}</span>}
         <span className="ctx-window-usage" title={snapshotTitle}>
           {totalChars > 0 && `${formatChars(totalChars)} recorded`}
           {totalChars > 0 && totalTokens !== undefined && ' · '}
-          {totalTokens !== undefined && `${formatNumber(totalTokens)} tokens`}
+          {totalTokens !== undefined && `${estimated ? '≈ ' : ''}${formatNumber(totalTokens)} tokens`}
         </span>
       </div>
       {totalChars > 0 ? (
         <ContextBreakdown
-          label="Current context by recorded character count"
-          scaleChars={totalChars}
+          label={`${label} by recorded character count`}
+          scaleChars={Math.max(totalChars, scaleChars ?? 0)}
           items={details.map((detail) => ({ ...detail, id: detail.key, chars: detail.content.length }))}
         />
       ) : (
@@ -867,10 +904,10 @@ const initialContextOrder: Record<InitialContextSectionKey | 'user', number> = {
   user: 5
 };
 
-function InitialPromptBar({ sizes, messages, currentChars }: {
+function InitialPromptBar({ sizes, messages, scaleChars }: {
   sizes: ContextSizes;
   messages: InitialContextMessage[];
-  currentChars: number;
+  scaleChars: number;
 }) {
   const visibleMessages = messages.filter((message) => message.chars > 0);
   const total = visibleMessages.reduce((sum, message) => sum + message.chars, 0);
@@ -894,7 +931,7 @@ function InitialPromptBar({ sizes, messages, currentChars }: {
         {sizes.model && <span className="ctx-window-model">{sizes.model}</span>}
         <span className="ctx-window-usage">{formatChars(total)} raw text</span>
       </div>
-      <ContextBreakdown label="Initial context by character count" scaleChars={Math.max(total, currentChars)} items={items} />
+      <ContextBreakdown label="Initial context by character count" scaleChars={Math.max(total, scaleChars)} items={items} />
     </div>
   );
 }
@@ -964,7 +1001,8 @@ const contextEntryLabels: Record<CurrentContextEntry['kind'], string> = {
   assistant: 'Assistant',
   'tool-call': 'Tool call',
   'tool-result': 'Tool result',
-  attachments: 'Attachments'
+  attachments: 'Attachments',
+  summary: 'Compaction summary'
 };
 const contextEntryTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'medium' });
 

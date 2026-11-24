@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentHostUsageRow } from './AgentHostStoreReader.js';
-import type { AgentInfo, AgentTurnInfo, AttachmentInfo, ContextWindowSnapshot, CurrentContextDetail, CurrentContextEntry, InitialContextMessage, InitialContextSection, InstructionInfo, SessionOverview, SkillInfo, ToolCallInfo, ToolInfo, TurnInfo } from './SessionSource.js';
+import type { AgentInfo, AgentTurnInfo, AttachmentInfo, ContextCompaction, ContextWindowSnapshot, CurrentContextDetail, CurrentContextEntry, InitialContextMessage, InitialContextSection, InstructionInfo, SessionOverview, SkillInfo, ToolCallInfo, ToolInfo, TurnInfo } from './SessionSource.js';
 
 const HEADER_LIMIT_BYTES = 256 * 1024;
 const TEXT_LIMIT = 20_000;
@@ -286,7 +286,9 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
   let systemTokens: number | undefined;
   let conversationTokens: number | undefined;
   let toolDefinitionsTokens: number | undefined;
-  let finalContext: ContextWindowSnapshot | undefined;
+  let eventContext: ContextWindowSnapshot | undefined;
+  let lastCompactionStart: AgentHostEvent | undefined;
+  let lastCompaction: { start?: AgentHostEvent; complete: AgentHostEvent } | undefined;
   let messageCount = 0;
   const reasoningEffortByModel = new Map<string, string>();
 
@@ -516,14 +518,23 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
       systemTokens ??= snapshot?.systemTokens;
       conversationTokens ??= snapshot?.conversationTokens;
       toolDefinitionsTokens ??= snapshot?.toolDefinitionsTokens;
-      if (snapshot) finalContext = snapshot;
+      if (snapshot) eventContext = snapshot;
+      if (event.type === 'session.compaction_start') lastCompactionStart = event;
+    }
+
+    if (event.type === 'session.compaction_complete' && isAppliedCompaction(data)) {
+      const attemptId = stringValue(data.compactionAttemptId);
+      const start = !attemptId || stringValue(lastCompactionStart?.data.compactionAttemptId) === attemptId ? lastCompactionStart : undefined;
+      lastCompaction = { start, complete: event };
     }
   }
 
+  // Real requests win over local estimates, unless a compaction replaced the context after the last request.
   const usageContext = createUsageContextSnapshot(usage);
-  if (usageContext && (!finalContext || (usageContext.capturedAt ?? '') > (finalContext.capturedAt ?? ''))) {
-    finalContext = usageContext;
-  }
+  const compaction = lastCompaction && readCompaction(ordered, usage, lastCompaction.start, lastCompaction.complete);
+  const finalContext = compaction && (!usageContext || compaction.completedAt > (usageContext.capturedAt ?? ''))
+    ? readCompactionContext(lastCompaction?.complete.data ?? {}, compaction.completedAt)
+    : usageContext ?? eventContext;
 
   while (pendingUsers.length) {
     const user = pendingUsers.shift();
@@ -620,6 +631,7 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
     contextContent,
     finalContext,
     currentContextDetails: readCurrentContextDetails(ordered, finalContext?.capturedAt),
+    lastCompaction: compaction,
     contextSizes: {
       systemPromptTotalBytes: Buffer.byteLength(systemPrompt, 'utf8'),
       systemPromptSkillsBytes: blockByteLength(systemPrompt, 'available_skills'),
@@ -673,6 +685,42 @@ function readContextSnapshot(data: Record<string, unknown>, capturedAt?: string)
     : undefined;
 }
 
+function isAppliedCompaction(data: Record<string, unknown>): boolean {
+  return data.success !== false && (data.outcome === undefined || data.outcome === 'applied');
+}
+
+function readCompactionContext(data: Record<string, unknown>, capturedAt: string): ContextWindowSnapshot {
+  return {
+    currentTokens: numberValue(data.postCompactionTokens),
+    systemTokens: numberValue(data.systemTokens),
+    conversationTokens: numberValue(data.conversationTokens),
+    toolDefinitionsTokens: numberValue(data.toolDefinitionsTokens),
+    model: stringValue(data.model) ?? stringValue(data.behaviorModelId),
+    capturedAt,
+    source: 'compaction'
+  };
+}
+
+function readCompaction(
+  events: AgentHostEvent[],
+  usage: AgentHostUsageRow[],
+  start: AgentHostEvent | undefined,
+  complete: AgentHostEvent
+): ContextCompaction | undefined {
+  const completedAt = complete.timestamp;
+  if (!completedAt) return undefined;
+  const cutoff = start?.timestamp ?? events.filter((event) => event.timestamp && event.timestamp < completedAt).at(-1)?.timestamp;
+  const lastRequest = cutoff ? createUsageContextSnapshot(usage.filter((row) => row.timestamp && row.timestamp <= cutoff)) : undefined;
+  return {
+    startedAt: start?.timestamp,
+    completedAt,
+    trigger: stringValue(complete.data.trigger) ?? stringValue(start?.data.trigger),
+    messagesRemoved: numberValue(complete.data.messagesRemoved),
+    before: lastRequest ?? (start ? readContextSnapshot(start.data, start.timestamp) : undefined),
+    beforeDetails: readCurrentContextDetails(events, cutoff)
+  };
+}
+
 function readCurrentContextDetails(events: AgentHostEvent[], capturedAt?: string): CurrentContextDetail[] | undefined {
   if (!capturedAt) return undefined;
   const cutoff = Date.parse(capturedAt);
@@ -706,7 +754,13 @@ function readCurrentContextDetails(events: AgentHostEvent[], capturedAt?: string
       if (count !== undefined) reportedTools = `Available tools reported by the request: ${count}`;
       break;
     }
-    if (type === 'system.message') {
+    if (type === 'session.compaction_complete' && isAppliedCompaction(data)) {
+      // The summary replaces the compacted messages and tool calls.
+      conversation = '';
+      entries.length = 0;
+      const summary = textValue(data.summaryContent);
+      if (summary) addEntry('summary', 'Compaction summary', timestamp, summary);
+    } else if (type === 'system.message') {
       // A new system message records the rebuilt prompt, for example after a resume.
       systemPrompt = textValue(data.content) || systemPrompt;
     } else if (type === 'instruction.update') {
@@ -775,7 +829,7 @@ export function createUsageContextSnapshot(usage: AgentHostUsageRow[]): ContextW
 
 export function latestMainUsage(usage: AgentHostUsageRow[]): AgentHostUsageRow | undefined {
   return usage
-    .filter((row) => !row.agentId && !row.parentToolCallId)
+    .filter((row) => !row.agentId && !row.parentToolCallId && row.initiator !== 'compaction')
     .reduce<AgentHostUsageRow | undefined>((latest, row) => {
       if (!latest) return row;
       if (!row.timestamp) return latest.timestamp ? latest : row;

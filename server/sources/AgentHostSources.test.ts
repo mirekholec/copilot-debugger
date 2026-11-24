@@ -203,6 +203,89 @@ test('event reader falls back to the latest main usage request for current conte
   });
 });
 
+test('current context prefers the latest real request over a later shutdown estimate', async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-shutdown-estimate-'));
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  const eventPath = path.join(root, 'events.jsonl');
+  await fs.writeFile(eventPath, JSON.stringify({
+    type: 'session.shutdown',
+    timestamp: '2026-01-01T10:00:05.000Z',
+    data: { currentTokens: 9000, toolDefinitionsTokens: 8000 }
+  }) + '\n');
+
+  const details = await new AgentHostEventReader().readDetails(eventPath, [
+    { sessionId: 'fixture-session', model: 'fixture-model', inputTokens: 300, outputTokens: 10, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, nanoAiu: 0, timestamp: '2026-01-01T10:00:01.000Z' }
+  ]);
+
+  assert.equal(details.overview.finalContext?.currentTokens, 300);
+  assert.equal(details.overview.finalContext?.source, 'usage');
+});
+
+test('current context reflects the latest compaction and keeps the window before it', async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-compaction-'));
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  const eventPath = path.join(root, 'events.jsonl');
+  const timestamp = (second: number) => `2026-01-01T10:00:${String(second).padStart(2, '0')}.000Z`;
+  const events = [
+    { type: 'system.message', data: { content: 'System prompt' } },
+    { type: 'user.message', data: { content: 'First question' } },
+    { type: 'tool.execution_start', data: { toolCallId: 'tool-1', toolName: 'view', arguments: 'a.ts' } },
+    { type: 'tool.execution_complete', data: { toolCallId: 'tool-1', result: { content: 'Compacted tool result' } } },
+    { type: 'assistant.message', data: { content: 'First answer' } },
+    { type: 'session.compaction_start', data: { compactionAttemptId: 'attempt-1', currentTokens: 500, trigger: 'manual' } },
+    {
+      type: 'session.compaction_complete',
+      data: {
+        compactionAttemptId: 'attempt-1', success: true, outcome: 'applied', trigger: 'manual', messagesRemoved: 3, behaviorModelId: 'fixture-model',
+        postCompactionTokens: 200, systemTokens: 100, conversationTokens: 20, toolDefinitionsTokens: 80, summaryContent: 'Summary of the first question'
+      }
+    },
+    { type: 'session.shutdown', data: { currentTokens: 9000 } }
+  ];
+  await fs.writeFile(eventPath, events.map((event, index) => JSON.stringify({ ...event, timestamp: timestamp(index) })).join('\n') + '\n');
+  const usageRow = (inputTokens: number, second: number, initiator?: string): AgentHostUsageRow => ({
+    sessionId: 'fixture-session', model: 'fixture-model', initiator, inputTokens, outputTokens: 10, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, nanoAiu: 0, timestamp: timestamp(second)
+  });
+  const reader = new AgentHostEventReader();
+
+  const compacted = await reader.readDetails(eventPath, [usageRow(450, 2), usageRow(480, 4), usageRow(700, 6, 'compaction')]);
+  assert.deepEqual(compacted.overview.finalContext, {
+    currentTokens: 200,
+    systemTokens: 100,
+    conversationTokens: 20,
+    toolDefinitionsTokens: 80,
+    model: 'fixture-model',
+    capturedAt: timestamp(6),
+    source: 'compaction'
+  });
+  const current = compacted.overview.currentContextDetails?.find(({ key }) => key === 'conversation');
+  assert.deepEqual(current?.entries?.map(({ kind, start, end }) => [kind, current.content.slice(start, end)]), [
+    ['summary', 'Summary of the first question']
+  ]);
+
+  const compaction = compacted.overview.lastCompaction;
+  assert.equal(compaction?.startedAt, timestamp(5));
+  assert.equal(compaction?.completedAt, timestamp(6));
+  assert.equal(compaction?.trigger, 'manual');
+  assert.equal(compaction?.messagesRemoved, 3);
+  assert.equal(compaction?.before?.currentTokens, 480);
+  assert.equal(compaction?.before?.source, 'usage');
+  const before = compaction?.beforeDetails?.find(({ key }) => key === 'conversation');
+  assert.deepEqual(before?.entries?.map(({ kind }) => kind), ['user', 'tool-call', 'tool-result', 'assistant']);
+  assert.doesNotMatch(before?.content ?? '', /Summary of the first question/);
+
+  await fs.appendFile(eventPath, [
+    { type: 'user.message', data: { content: 'Second question' } },
+    { type: 'session.usage_record', data: {} }
+  ].map((event, index) => JSON.stringify({ ...event, timestamp: timestamp(8 + index) })).join('\n') + '\n');
+  const continued = await reader.readDetails(eventPath, [usageRow(450, 2), usageRow(480, 4), usageRow(700, 6, 'compaction'), usageRow(260, 9)]);
+  assert.equal(continued.overview.finalContext?.currentTokens, 260);
+  assert.equal(continued.overview.finalContext?.source, 'usage');
+  const next = continued.overview.currentContextDetails?.find(({ key }) => key === 'conversation');
+  assert.deepEqual(next?.entries?.map(({ kind }) => kind), ['summary', 'user']);
+  assert.doesNotMatch(next?.content ?? '', /Compacted tool result/);
+});
+
 test('current context shows recorded tool discovery and excludes later tool results', async (context) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-current-context-'));
   context.after(() => fs.rm(root, { recursive: true, force: true }));

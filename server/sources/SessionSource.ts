@@ -210,11 +210,12 @@ export interface ContextWindowSnapshot {
   toolDefinitionsTokens?: number;
   model?: string;
   capturedAt?: string;
-  source?: 'event' | 'usage';
+  /** `usage` is a real model request; `event` and `compaction` are local estimates. */
+  source?: 'event' | 'usage' | 'compaction';
 }
 
 export interface CurrentContextEntry {
-  kind: 'user' | 'assistant' | 'tool-call' | 'tool-result' | 'attachments';
+  kind: 'user' | 'assistant' | 'tool-call' | 'tool-result' | 'attachments' | 'summary';
   timestamp: string;
   toolName?: string;
   /** UTF-16 offsets of the payload within the detail's content. */
@@ -227,6 +228,16 @@ export interface CurrentContextDetail {
   label: string;
   content: string;
   entries?: CurrentContextEntry[];
+}
+
+export interface ContextCompaction {
+  startedAt?: string;
+  completedAt: string;
+  trigger?: string;
+  messagesRemoved?: number;
+  /** The context window right before the compaction. */
+  before?: ContextWindowSnapshot;
+  beforeDetails?: CurrentContextDetail[];
 }
 
 export interface SessionOverview {
@@ -245,6 +256,7 @@ export interface SessionOverview {
   initialContextMessages?: InitialContextMessage[];
   finalContext?: ContextWindowSnapshot;
   currentContextDetails?: CurrentContextDetail[];
+  lastCompaction?: ContextCompaction;
 }
 
 export interface SessionSource {

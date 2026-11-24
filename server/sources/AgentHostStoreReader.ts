@@ -9,6 +9,8 @@ export interface AgentHostUsageRow {
   parentToolCallId?: string;
   model: string;
   reasoningEffort?: string;
+  /** Who started the request, for example `user`, `agent` or `compaction`. */
+  initiator?: string;
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
@@ -81,6 +83,7 @@ interface SqliteUsageRow {
   cache_write_tokens: number | null;
   reasoning_tokens: number | null;
   total_nano_aiu: number | null;
+  initiator: string | null;
   created_at: string | null;
 }
 
@@ -182,7 +185,7 @@ export class AgentHostStoreReader {
         const available = this.columnNames(database, 'assistant_usage_events');
         const columns = [
           'session_id', 'turn_index', 'agent_id', 'parent_tool_call_id', 'model', 'reasoning_effort', 'input_tokens', 'output_tokens',
-          'cache_read_tokens', 'cache_write_tokens', 'reasoning_tokens', 'total_nano_aiu', 'created_at'
+          'cache_read_tokens', 'cache_write_tokens', 'reasoning_tokens', 'total_nano_aiu', 'initiator', 'created_at'
         ];
         const select = columns.map((column) => available.has(column) ? column : `NULL AS ${column}`).join(', ');
         const orderColumn = available.has('id') ? 'id' : available.has('created_at') ? 'created_at' : 'session_id';
@@ -195,6 +198,7 @@ export class AgentHostStoreReader {
             parentToolCallId: optionalString(row.parent_tool_call_id),
             model: row.model,
             reasoningEffort: optionalString(row.reasoning_effort),
+            initiator: optionalString(row.initiator),
             inputTokens: row.input_tokens ?? 0,
             outputTokens: row.output_tokens ?? 0,
             cachedTokens: row.cache_read_tokens ?? 0,

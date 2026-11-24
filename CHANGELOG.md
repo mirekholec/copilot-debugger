@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-24
+
+### Added
+
+- Support context compaction. After a compaction, the current context window shows the compaction summary and the messages recorded after it instead of the messages that were removed.
+- Show the context window before the latest compaction above the current one, with the compaction time, trigger, and number of removed messages.
+
+### Changed
+
+- Take the current token total from the latest real model request. Local estimates from shutdown and compaction snapshots are used only when no later request exists and are marked with `≈`.
+- Draw the initial, pre-compaction, and current context bars on one shared scale.
+
+### Fixed
+
+- Stop the shutdown estimate, which can count the full tool catalog, from replacing the real token total of the last request.
+- Ignore the compaction summarizer request when determining the current context size.
+
 ## [1.0.0] - 2026-11-21
 
 ### Added
@@ -82,7 +99,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expanded the project documentation and npm package overview.
 - Added configurable polling through `SESSION_POLL_INTERVAL_MS`.
 
-[Unreleased]: https://github.com/mirekholec/copilot-debugger/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/mirekholec/copilot-debugger/compare/v1.1.0...HEAD
+[1.1.0]: https://www.npmjs.com/package/copilot-debugger/v/1.1.0
 [1.0.0]: https://www.npmjs.com/package/copilot-debugger/v/1.0.0
 [0.2.2]: https://www.npmjs.com/package/copilot-debugger/v/0.2.2
 [0.2.1]: https://www.npmjs.com/package/copilot-debugger/v/0.2.1
