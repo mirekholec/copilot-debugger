@@ -69,13 +69,6 @@ h1 {
   gap: 8px;
 }
 
-.list-toolbar h1 span {
-  color: var(--muted);
-  font-size: 0.85rem;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-
 .filters,
 .search-box,
 .select-box,
@@ -115,6 +108,87 @@ h1 {
   flex-shrink: 0;
 }
 
+.workspace-select {
+  position: relative;
+  padding: 0;
+}
+
+.workspace-select-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.workspace-select-trigger svg {
+  color: var(--muted);
+}
+
+.workspace-select-trigger span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-select-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-width: 100%;
+  width: max-content;
+  max-width: min(22rem, 90vw);
+  max-height: 20rem;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 6px 20px rgb(24 36 57 / 14%);
+}
+
+.workspace-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.workspace-option:hover {
+  background: var(--subtle);
+}
+
+.filters .workspace-option input {
+  flex-shrink: 0;
+  width: auto;
+  min-height: 0;
+  margin: 0;
+}
+
+.workspace-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .filters input,
 .filters select {
   width: 100%;
@@ -129,6 +203,18 @@ h1 {
 
 .filters select {
   text-overflow: ellipsis;
+}
+
+.filters input:focus-visible,
+.workspace-select-trigger:focus-visible {
+  outline: none;
+}
+
+.search-box:focus-within,
+.date-box:focus-within,
+.workspace-select:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .filters input::placeholder {
@@ -264,6 +350,7 @@ h1 {
   text-align: right;
 }
 
+.session-total small,
 .session-total-credits small {
   margin-left: 8px;
   color: var(--muted);

@@ -223,21 +223,24 @@ const FILTERS_STORAGE_KEY = 'copilot-debugger.filters';
 interface StoredFilters {
   dateFrom: string;
   dateTo: string;
-  workspaceFilter: string;
+  workspaceFilters: string[];
 }
 
 function loadStoredFilters(): StoredFilters {
+  const defaults: StoredFilters = { dateFrom: defaultDateFrom(), dateTo: defaultDateTo(), workspaceFilters: [] };
   try {
-    const raw = window.sessionStorage.getItem(FILTERS_STORAGE_KEY);
-    if (!raw) return { dateFrom: defaultDateFrom(), dateTo: defaultDateTo(), workspaceFilter: 'all' };
+    const raw = window.localStorage.getItem(FILTERS_STORAGE_KEY);
+    if (!raw) return defaults;
     const parsed = JSON.parse(raw) as Partial<StoredFilters>;
     return {
-      dateFrom: typeof parsed.dateFrom === 'string' && parsed.dateFrom ? parsed.dateFrom : defaultDateFrom(),
-      dateTo: typeof parsed.dateTo === 'string' && parsed.dateTo ? parsed.dateTo : defaultDateTo(),
-      workspaceFilter: typeof parsed.workspaceFilter === 'string' && parsed.workspaceFilter ? parsed.workspaceFilter : 'all'
+      dateFrom: typeof parsed.dateFrom === 'string' && parsed.dateFrom ? parsed.dateFrom : defaults.dateFrom,
+      dateTo: typeof parsed.dateTo === 'string' && parsed.dateTo ? parsed.dateTo : defaults.dateTo,
+      workspaceFilters: Array.isArray(parsed.workspaceFilters)
+        ? parsed.workspaceFilters.filter((value): value is string => typeof value === 'string')
+        : []
     };
   } catch {
-    return { dateFrom: defaultDateFrom(), dateTo: defaultDateTo(), workspaceFilter: 'all' };
+    return defaults;
   }
 }
 
@@ -271,7 +274,7 @@ export default function App() {
   const [sessions, setSessions] = useState<NormalizedSession[]>([]);
   const [error, setError] = useState<string>();
   const [query, setQuery] = useState('');
-  const [workspaceFilter, setWorkspaceFilter] = useState(() => loadStoredFilters().workspaceFilter);
+  const [workspaceFilters, setWorkspaceFilters] = useState(() => loadStoredFilters().workspaceFilters);
   const [detailSessionId, setDetailSessionId] = useState<string | undefined>(() => getRouteSessionId());
   const [turns, setTurns] = useState<TurnInfo[]>();
   const [turnsLoading, setTurnsLoading] = useState(false);
@@ -283,9 +286,9 @@ export default function App() {
   const hasConnectedRef = useRef(false);
 
   useEffect(() => {
-    const filters: StoredFilters = { dateFrom, dateTo, workspaceFilter };
-    window.sessionStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(filters));
-  }, [dateFrom, dateTo, workspaceFilter]);
+    const filters: StoredFilters = { dateFrom, dateTo, workspaceFilters };
+    window.localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(filters));
+  }, [dateFrom, dateTo, workspaceFilters]);
 
   async function loadSessions() {
     try {
@@ -408,11 +411,11 @@ export default function App() {
     return [...names].sort();
   }, [sessions, dateFrom, dateTo]);
 
-  useEffect(() => {
-    if (workspaceFilter !== 'all' && !workspaces.includes(workspaceFilter)) {
-      setWorkspaceFilter('all');
-    }
-  }, [workspaces, workspaceFilter]);
+  // Stored selection may contain workspaces outside the current date range or not loaded yet; those are ignored, not removed.
+  const activeWorkspaces = useMemo(
+    () => workspaceFilters.filter((workspace) => workspaces.includes(workspace)),
+    [workspaces, workspaceFilters]
+  );
 
   const filteredSessions = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -428,10 +431,10 @@ export default function App() {
             .some((value) => value?.toLowerCase().includes(normalizedQuery))
         : true;
       const sessionWorkspace = session.workspaceName ?? session.workspaceStorageId;
-      const matchesWorkspace = workspaceFilter === 'all' || sessionWorkspace === workspaceFilter;
+      const matchesWorkspace = activeWorkspaces.length === 0 || activeWorkspaces.includes(sessionWorkspace);
       return matchesQuery && matchesWorkspace;
     });
-  }, [workspaceFilter, query, sessions, dateFrom, dateTo]);
+  }, [activeWorkspaces, query, sessions, dateFrom, dateTo]);
 
   const totalAiCredits = useMemo(() => {
     const values = filteredSessions.flatMap((session) => session.cost.aiCredits === undefined ? [] : [session.cost.aiCredits]);
@@ -508,24 +511,14 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="list-toolbar">
-        <h1>Sessions <span>{formatNumber(filteredSessions.length)}</span></h1>
+        <h1>Copilot Debugger</h1>
         <div className="filters" role="group" aria-label="Session filters">
           <label className="search-box">
             <Search size={17} aria-hidden="true" />
             <input type="search" aria-label="Search sessions" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sessions" />
           </label>
 
-          <label className="select-box">
-            <Filter size={17} aria-hidden="true" />
-            <select aria-label="Workspace" value={workspaceFilter} onChange={(event) => setWorkspaceFilter(event.target.value)}>
-              <option value="all">All workspaces</option>
-              {workspaces.map((ws) => (
-                <option key={ws} value={ws}>
-                  {ws.length > 25 ? ws.slice(0, 25) + '…' : ws}
-                </option>
-              ))}
-            </select>
-          </label>
+          <WorkspaceMultiSelect workspaces={workspaces} selected={activeWorkspaces} onChange={setWorkspaceFilters} />
 
           <label className="date-box">
             <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} aria-label="From date" />
@@ -553,7 +546,7 @@ export default function App() {
               <span>AI credits</span>
             </div>
             <div className="session-total">
-              <span>Total</span>
+              <span>Total <small>{formatNumber(filteredSessions.length)} sessions</small></span>
               <span className="session-total-credits">
                 {totalAiCredits === undefined ? '—' : (
                   <>
@@ -593,6 +586,66 @@ export default function App() {
       </section>
       <Footer />
     </main>
+  );
+}
+
+function WorkspaceMultiSelect({ workspaces, selected, onChange }: {
+  workspaces: string[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  const label = selected.length === 0
+    ? 'All workspaces'
+    : selected.length === 1
+      ? selected[0]
+      : `${selected.length} workspaces`;
+
+  function toggle(workspace: string) {
+    onChange(selected.includes(workspace) ? selected.filter((value) => value !== workspace) : [...selected, workspace]);
+  }
+
+  return (
+    <div className="select-box workspace-select" ref={rootRef}>
+      <button type="button" className="workspace-select-trigger" aria-label="Workspace" aria-haspopup="true" aria-expanded={open} aria-controls={menuId} onClick={() => setOpen((value) => !value)}>
+        <Filter size={17} aria-hidden="true" />
+        <span>{label}</span>
+        <ChevronDown size={15} aria-hidden="true" />
+      </button>
+      {open ? (
+        <div className="workspace-select-menu" id={menuId} role="group" aria-label="Workspaces">
+          <label className="workspace-option">
+            <input type="checkbox" checked={selected.length === 0} onChange={() => onChange([])} />
+            <span>All workspaces</span>
+          </label>
+          {workspaces.map((workspace) => (
+            <label className="workspace-option" key={workspace} title={workspace}>
+              <input type="checkbox" checked={selected.includes(workspace)} onChange={() => toggle(workspace)} />
+              <span>{workspace}</span>
+            </label>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
