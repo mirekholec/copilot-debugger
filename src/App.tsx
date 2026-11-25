@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, ChevronRight, Clock3, Coins, Filter, Globe, RefreshCw, Search } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import type { ContextCompaction, CurrentContextDetail, CurrentContextEntry } from '../server/sources/SessionSource';
+import type { ContextCompaction, CurrentContextDetail, CurrentContextEntry, SubagentContext } from '../server/sources/SessionSource';
 import { ContextContent } from './ContextContent';
 
 interface NormalizedSession {
@@ -197,6 +197,7 @@ interface SessionOverview {
   initialContextMessages?: InitialContextMessage[];
   finalContext?: ContextWindowSnapshot;
   currentContextDetails?: CurrentContextDetail[];
+  subagentContexts?: SubagentContext[];
   lastCompaction?: ContextCompaction;
 }
 
@@ -899,6 +900,16 @@ function CurrentContextPanel({ overview }: { overview: SessionOverview }) {
         />
       )}
       <CurrentContextBar snapshot={overview.finalContext} fallbackModel={fallbackModel} details={overview.currentContextDetails} scaleChars={scaleChars} />
+      {overview.subagentContexts?.map((agent) => (
+        <CurrentContextBar
+          key={agent.agentId}
+          label={`Subagent · ${agent.agentName ?? agent.agentId.slice(0, 8)}`}
+          meta={agent.startedAt ? `Started ${formatDateTime(agent.startedAt)}` : undefined}
+          snapshot={agent.context}
+          details={agent.details}
+          scaleChars={scaleChars}
+        />
+      ))}
     </div>
   );
 }
@@ -920,7 +931,8 @@ function contextScaleChars(overview: SessionOverview) {
   return Math.max(
     (overview.initialContextMessages ?? []).reduce((sum, message) => sum + message.chars, 0),
     countCurrentContextChars(overview.currentContextDetails),
-    countCurrentContextChars(overview.lastCompaction?.beforeDetails)
+    countCurrentContextChars(overview.lastCompaction?.beforeDetails),
+    ...(overview.subagentContexts ?? []).map((agent) => countCurrentContextChars(agent.details))
   );
 }
 

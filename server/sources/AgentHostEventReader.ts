@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentHostUsageRow } from './AgentHostStoreReader.js';
-import type { AgentInfo, AgentTurnInfo, AttachmentInfo, ContextCompaction, ContextWindowSnapshot, CurrentContextDetail, CurrentContextEntry, InitialContextMessage, InitialContextSection, InstructionInfo, SessionOverview, SkillInfo, ToolCallInfo, ToolInfo, TurnInfo } from './SessionSource.js';
+import type { AgentInfo, AgentTurnInfo, AttachmentInfo, ContextCompaction, ContextWindowSnapshot, CurrentContextDetail, CurrentContextEntry, InitialContextMessage, InitialContextSection, InstructionInfo, SessionOverview, SkillInfo, SubagentContext, ToolCallInfo, ToolInfo, TurnInfo } from './SessionSource.js';
 
 const HEADER_LIMIT_BYTES = 256 * 1024;
 const TEXT_LIMIT = 20_000;
@@ -21,6 +21,8 @@ interface AgentHostEvent {
   parentId?: string;
   timestamp?: string;
   type?: string;
+  /** Set on events emitted by a subagent; the main agent's events have none. */
+  agentId?: string;
   data: Record<string, unknown>;
   order: number;
 }
@@ -217,6 +219,7 @@ function parseEvent(line: string, order: number): AgentHostEvent | undefined {
       parentId: stringValue(value.parentId),
       timestamp: isoValue(value.timestamp),
       type: stringValue(value.type),
+      agentId: stringValue(value.agentId),
       data,
       order
     };
@@ -232,6 +235,7 @@ export function isSlashCommand(message: string | undefined): boolean {
 function consumeHeaderEvent(header: AgentHostEventHeader, event: AgentHostEvent): void {
   const data = event.data;
   header.updatedAt = maxIso(header.updatedAt, event.timestamp);
+  if (event.agentId) return;
   if (event.type === 'session.start') {
     header.sessionId = stringValue(data.sessionId) ?? header.sessionId;
     header.producer = stringValue(data.producer) ?? header.producer;
@@ -291,6 +295,7 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
   let lastCompaction: { start?: AgentHostEvent; complete: AgentHostEvent } | undefined;
   let messageCount = 0;
   const reasoningEffortByModel = new Map<string, string>();
+  const toolCallByAgent = new Map<string, string>();
 
   const createTurn = (event: AgentHostEvent, data: Record<string, unknown>): MutableTurn => {
     const interactionId = stringValue(data.interactionId);
@@ -331,6 +336,8 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
 
   for (const event of ordered) {
     const data = event.data;
+    // Subagent events are shown separately; only their lifecycle events belong to the main flow.
+    if (event.agentId && event.type !== 'subagent.started' && event.type !== 'subagent.completed') continue;
     if (event.type === 'session.start' || event.type === 'session.resume') {
       const model = stringValue(data.selectedModel);
       const reasoningEffort = getReasoningEffort(data);
@@ -475,6 +482,7 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
     if (event.type === 'subagent.started' || event.type === 'subagent.completed') {
       const id = stringValue(data.toolCallId);
       const agentName = stringValue(data.agentName) ?? stringValue(data.agentId);
+      if (event.agentId && id) toolCallByAgent.set(event.agentId, id);
       if (agentName) {
         usedAgents.add(agentName);
       }
@@ -554,8 +562,10 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
   }
 
   for (const row of usage) {
-    if (row.agentId && row.parentToolCallId) {
-      const tool = toolById.get(row.parentToolCallId);
+    // The store often lacks parent_tool_call_id, so fall back to the one from the subagent.started event.
+    const parentToolCallId = row.parentToolCallId ?? (row.agentId ? toolCallByAgent.get(row.agentId) : undefined);
+    if (row.agentId && parentToolCallId) {
+      const tool = toolById.get(parentToolCallId);
       if (tool) {
         tool.subagentName ??= row.agentId;
         tool.subagentTurns ??= [];
@@ -631,6 +641,7 @@ function foldEvents(events: AgentHostEvent[], usage: AgentHostUsageRow[], warnin
     contextContent,
     finalContext,
     currentContextDetails: readCurrentContextDetails(ordered, finalContext?.capturedAt),
+    subagentContexts: readSubagentContexts(ordered, usage),
     lastCompaction: compaction,
     contextSizes: {
       systemPromptTotalBytes: Buffer.byteLength(systemPrompt, 'utf8'),
@@ -721,7 +732,32 @@ function readCompaction(
   };
 }
 
-function readCurrentContextDetails(events: AgentHostEvent[], capturedAt?: string): CurrentContextDetail[] | undefined {
+function readSubagentContexts(events: AgentHostEvent[], usage: AgentHostUsageRow[]): SubagentContext[] | undefined {
+  const agents = new Map<string, SubagentContext>();
+  for (const event of events) {
+    if (!event.agentId || (event.type !== 'subagent.started' && event.type !== 'subagent.completed')) continue;
+    const agent = agents.get(event.agentId) ?? { agentId: event.agentId, context: {}, details: [] };
+    agent.agentName ??= stringValue(event.data.agentName);
+    agent.toolCallId ??= stringValue(event.data.toolCallId);
+    if (event.type === 'subagent.started') agent.startedAt ??= event.timestamp;
+    else agent.completedAt = event.timestamp;
+    agents.set(event.agentId, agent);
+  }
+
+  const contexts: SubagentContext[] = [];
+  for (const agent of agents.values()) {
+    const rows = usage.filter((row) => row.agentId === agent.agentId && row.inputTokens > 0 && row.initiator !== 'compaction');
+    const latest = rows.reduce<AgentHostUsageRow | undefined>((last, row) => !last || (row.timestamp ?? '') >= (last.timestamp ?? '') ? row : last, undefined);
+    if (!latest) continue;
+    agent.context = { currentTokens: latest.inputTokens, model: latest.model, capturedAt: latest.timestamp, source: 'usage' };
+    agent.details = readCurrentContextDetails(events, latest.timestamp, agent.agentId) ?? [];
+    contexts.push(agent);
+  }
+  return contexts.length ? contexts.sort((left, right) => (left.startedAt ?? '').localeCompare(right.startedAt ?? '')) : undefined;
+}
+
+/** Without `agentId` this reads the main agent's context; with it, that subagent's own window. */
+function readCurrentContextDetails(events: AgentHostEvent[], capturedAt?: string, agentId?: string): CurrentContextDetail[] | undefined {
   if (!capturedAt) return undefined;
   const cutoff = Date.parse(capturedAt);
   if (!Number.isFinite(cutoff)) return undefined;
@@ -747,7 +783,9 @@ function readCurrentContextDetails(events: AgentHostEvent[], capturedAt?: string
   const discoveredTools = new Set<string>();
   let systemPrompt: string | undefined;
   let reportedTools: string | undefined;
-  for (const { type, data, timestamp } of events) {
+  for (const event of events) {
+    const { type, data, timestamp } = event;
+    if (event.agentId !== agentId) continue;
     if (!timestamp || !(Date.parse(timestamp) <= cutoff)) continue;
     if (type === 'session.usage_record' && Date.parse(timestamp) === cutoff && isRecord(data.usage)) {
       const count = numberValue(data.usage.availableToolCount);

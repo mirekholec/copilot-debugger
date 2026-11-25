@@ -699,3 +699,44 @@ function createFixtureDatabase(databasePath: string): void {
   `);
   database.close();
 }
+
+test('current context excludes subagent events and exposes each subagent window separately', async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'copilot-debugger-subagent-context-'));
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  const eventPath = path.join(root, 'events.jsonl');
+  const timestamp = (second: number) => `2026-01-01T10:00:0${second}.000Z`;
+  const events = [
+    { type: 'system.message', data: { content: 'Main system prompt' } },
+    { type: 'user.message', data: { content: 'Main question' } },
+    { type: 'subagent.started', agentId: 'agent-1', data: { toolCallId: 'task-1', agentName: 'summarizer' } },
+    { type: 'system.message', agentId: 'agent-1', data: { content: 'Subagent system prompt' } },
+    { type: 'user.message', agentId: 'agent-1', data: { content: 'Subagent task' } },
+    { type: 'tool.execution_start', agentId: 'agent-1', data: { toolCallId: 'view-1', toolName: 'view' } },
+    { type: 'session.usage_record', agentId: 'agent-1', data: {} },
+    { type: 'subagent.completed', agentId: 'agent-1', data: { toolCallId: 'task-1', agentName: 'summarizer' } },
+    { type: 'assistant.message', data: { content: 'Main answer' } },
+    { type: 'session.usage_record', data: {} }
+  ];
+  await fs.writeFile(eventPath, events.map((event, index) => JSON.stringify({ ...event, timestamp: timestamp(index) })).join('\n') + '\n');
+  const usageRow = (inputTokens: number, second: number, agentId?: string): AgentHostUsageRow => ({
+    sessionId: 'fixture-session', agentId, model: agentId ? 'sub-model' : 'main-model', inputTokens, outputTokens: 1, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, nanoAiu: 0, timestamp: timestamp(second)
+  });
+  const details = await new AgentHostEventReader().readDetails(eventPath, [usageRow(500, 9), usageRow(80, 6, 'agent-1')]);
+  const { overview } = details;
+
+  assert.equal(overview.finalContext?.currentTokens, 500);
+  const main = Object.fromEntries((overview.currentContextDetails ?? []).map(({ key, content }) => [key, content]));
+  assert.equal(main.system, 'Main system prompt');
+  assert.match(main.conversation, /Main question[\s\S]*Main answer/);
+  assert.doesNotMatch(main.conversation, /Subagent task|view/);
+
+  assert.equal(overview.subagentContexts?.length, 1);
+  const [agent] = overview.subagentContexts ?? [];
+  assert.equal(agent.agentName, 'summarizer');
+  assert.equal(agent.context.currentTokens, 80);
+  assert.equal(agent.context.model, 'sub-model');
+  const sub = Object.fromEntries(agent.details.map(({ key, content }) => [key, content]));
+  assert.equal(sub.system, 'Subagent system prompt');
+  assert.match(sub.conversation, /Subagent task[\s\S]*view · call/);
+  assert.doesNotMatch(sub.conversation, /Main question|Main answer/);
+});

@@ -241,6 +241,17 @@ export interface ContextCompaction {
   beforeDetails?: CurrentContextDetail[];
 }
 
+/** The context window of one subagent, captured at its last model request. */
+export interface SubagentContext {
+  agentId: string;
+  agentName?: string;
+  toolCallId?: string;
+  startedAt?: string;
+  completedAt?: string;
+  context: ContextWindowSnapshot;
+  details: CurrentContextDetail[];
+}
+
 export interface SessionOverview {
   skills: SkillInfo[];
   skillsAvailability?: 'catalog' | 'unavailable';
@@ -257,6 +268,7 @@ export interface SessionOverview {
   initialContextMessages?: InitialContextMessage[];
   finalContext?: ContextWindowSnapshot;
   currentContextDetails?: CurrentContextDetail[];
+  subagentContexts?: SubagentContext[];
   lastCompaction?: ContextCompaction;
 }
 
