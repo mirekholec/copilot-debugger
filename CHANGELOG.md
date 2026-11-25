@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-25
+
+### Added
+
+- Show the context window of each subagent as its own bar below the main agent's current context window, with the model, start time, token count, and the same clickable sections.
+
+### Fixed
+
+- Stop the current context window of the main agent from including messages, tool calls, and system prompts of subagents.
+- Stop subagent requests from being counted in the main agent's turn. They are now listed under the `task` tool call that started the subagent, also when the store lacks the parent tool call ID.
+- Stop a subagent's model from replacing the session model in the session header.
+
 ## [1.2.0] - 2026-11-24
 
 ### Added
@@ -113,7 +125,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expanded the project documentation and npm package overview.
 - Added configurable polling through `SESSION_POLL_INTERVAL_MS`.
 
-[Unreleased]: https://github.com/mirekholec/copilot-debugger/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/mirekholec/copilot-debugger/compare/v1.3.0...HEAD
+[1.3.0]: https://www.npmjs.com/package/copilot-debugger/v/1.3.0
 [1.2.0]: https://www.npmjs.com/package/copilot-debugger/v/1.2.0
 [1.1.0]: https://www.npmjs.com/package/copilot-debugger/v/1.1.0
 [1.0.0]: https://www.npmjs.com/package/copilot-debugger/v/1.0.0
