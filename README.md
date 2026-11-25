@@ -146,21 +146,20 @@ Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 
 ## Screenshots
 
-**Session list** - search, workspace and date filters, AI Credits per session.
-
-[![Session list](docs/cd1.png)](docs/cd1.png)
-
-**Session detail** - initial context window, tool payloads, and a conversation card with its model calls and tool calls expanded.
-
-[![Session detail](docs/cd2.png)](docs/cd2.png)
-
-**Context inspection** - an opened context segment with formatted XML.
-
-[![Initial context segment](docs/cd3.png)](docs/cd3.png)
-
-**Current context** - the latest recorded context with the timeline of messages, tool calls, and tool results.
-
-[![Current context timeline](docs/cd4.png)](docs/cd4.png)
+<table>
+  <tr>
+    <td width="50%"><a href="docs/cd1.png"><img src="docs/cd1.png" alt="Session list"></a><br><b>Session list</b> - Sessions sorted by last update with AI Credits per session and a total for the selected range.</td>
+    <td width="50%"><a href="docs/cd2.png"><img src="docs/cd2.png" alt="Search"></a><br><b>Search</b> - Search by message, session ID, workspace, or repository.</td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="docs/cd3.png"><img src="docs/cd3.png" alt="Conversation"></a><br><b>Conversation</b> - A conversation card with its model calls and tool calls expanded.</td>
+    <td width="50%"><a href="docs/cd4.png"><img src="docs/cd4.png" alt="Context inspection"></a><br><b>Context inspection</b> - An opened context segment with formatted XML.</td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="docs/cd5.png"><img src="docs/cd5.png" alt="Messages and tool calls"></a><br><b>Messages and tool calls</b> - Timeline of messages, tool calls, and results in the current context.</td>
+    <td width="50%"><a href="docs/cd6.png"><img src="docs/cd6.png" alt="Subagents"></a><br><b>Subagents</b> - A separate context window for each subagent.</td>
+  </tr>
+</table>
 
 ## Architecture
 
